@@ -1,0 +1,99 @@
+# Maintainer: omarchy-jetson contributors
+
+pkgname=omarchy-jetson-upstream
+pkgver=4.0.4
+pkgrel=4
+pkgdesc='Jetson AGX Orin layer over upstream Omarchy: hardware overrides, managed shell service, PATH ordering'
+arch=('aarch64')
+url='https://github.com/omacom/omarchy'
+license=('MIT')
+# Upstream Omarchy (aarch64 [omarchy] repo) now provides the shell, themes,
+# Hyprland defaults and the omarchy-* command set. This package carries only
+# what the Jetson needs on top, and retires the packages that used to vendor
+# a pinned copy of upstream.
+depends=('omarchy' 'omarchy-settings' 'bash' 'foot' 'hyprland' 'jq' 'procps-ng'
+         'quickshell' 'systemd' 'util-linux' 'uwsm')
+optdepends=('omarchy-jetson-menu: screensaver effect picker (omarchy-jetson-screensaver)'
+            'ttfx: terminal effects engine for the screensaver')
+provides=('omarchy-jetson-bindings' 'omarchy-jetson-quattro-shell' 'omarchy-jetson-quattro-themes')
+conflicts=('omarchy-jetson-bindings' 'omarchy-jetson-quattro-shell' 'omarchy-jetson-quattro-themes')
+replaces=('omarchy-jetson-bindings' 'omarchy-jetson-quattro-shell' 'omarchy-jetson-quattro-themes')
+install=omarchy-jetson-upstream.install
+
+source=(
+  'omarchy-jetson-shell'
+  'omarchy-jetson-shell.service'
+  'omarchy-jetson-theme-set'
+  'default-shell.json'
+  'default-menu-extension.jsonc'
+  'omarchy-launch-terminal'
+  'omarchy-terminal-context'
+  'terminal-context.bashrc'
+  'omarchy-jetson-reload-hyprland'
+  '20-omarchy-jetson'
+  'omarchy-jetson-qt612-shell-fix'
+  '90-omarchy-jetson-qt612-shell-fix.hook'
+  'omarchy-jetson.sh'
+  "omarchy-v${pkgver}.tar.gz::https://github.com/omacom/omarchy/archive/refs/tags/v${pkgver}.tar.gz"
+  "PROJECT-LICENSE::file://${startdir}/../../LICENSE"
+)
+sha256sums=('02c553851142ba1a4f6bdc4a4cdfafd73818c03178b2de6d78831fcc5717824e'
+            '382239e566260e24081400ed908a189cf0711ac7a61b828328aab1e8b162e1ec'
+            'b55d3356e8a25110e17d38b66a160f09fb7600c98ce74c87f3a17570f179590e'
+            'b9452e7f597ad33727580df7078de9da3c9afbf463444b5416f070221dbca76b'
+            'c37009a65778ecddf07dda716410e1cf9c92109055b43c823c84e332f1333578'
+            'b8346549ab6ace7002f23f8bb572d67b48f10ae0793a555a4838d494e8a7b653'
+            '81a886e1752e415b3d8e12201a002f749bc4a54bc606475fa7d56c6b2350da52'
+            '4fedc905025ca26ceb4c143f2e86765e8d9978905a7f1d25f3d0f651635d178e'
+            'b3c30b4e49dfea0453cc38e3bcf039c0711f01ca1f6f5f435eef3d2f7f653375'
+            'e357c6b026ce0c3381b398203280109b0ecb2a70d17c8a930ba844f97358c43f'
+            '5baeac593db8d5c74d20cfeac21fba07399f010840b4b1bfab1ad259b4b13728'
+            'a4119dfe8f3e2944d27165181eb7afae9d8b27b701450040a1b90d469b31020c'
+            'bed63c8512acf5a68591dad37725f5465d7e0bb22533cc999fc66edd326faeff'
+            'cd576f3ea0d1d87ed45dd3f34c7dfd42c982884ac15fe8bf5b858241254ec508'
+            '83cfe731d9126f1c55f3663e7c6e51e37267420bd92cfeafcb8ab96d2a9c12a2')
+
+package() {
+  local upstream="$srcdir/omarchy-$pkgver"
+  local overrides="$pkgdir/usr/lib/omarchy-jetson/bin"
+
+  # Hardware overrides, ahead of /usr/bin on PATH (see 20-omarchy-jetson).
+  # Work-context terminals need --title/--header-color, which upstream's
+  # launcher does not take.
+  install -Dm755 omarchy-launch-terminal "$overrides/omarchy-launch-terminal"
+
+  # Upstream hard-codes --random-effect, leaving the ttfx effects unreachable
+  # from the menu. Route the choice through omarchy-jetson-screensaver, falling
+  # back to random. The guard fails the build if upstream changes the call.
+  install -Dm755 "$upstream/bin/omarchy-screensaver" "$overrides/omarchy-screensaver"
+  grep -q -- '--random-effect --no-eol --no-restore-cursor' "$overrides/omarchy-screensaver" ||
+    { echo 'upstream omarchy-screensaver no longer matches the effect patch' >&2; return 1; }
+  sed -i 's#--random-effect --no-eol --no-restore-cursor#--no-eol --no-restore-cursor $(omarchy-jetson-screensaver effect-args 2>/dev/null || echo --random-effect)#' \
+    "$overrides/omarchy-screensaver"
+
+  # Managed shell service: seeds config, health-checks and restarts the
+  # upstream shell from /usr/share/omarchy.
+  install -Dm755 omarchy-jetson-shell "$pkgdir/usr/bin/omarchy-jetson-shell"
+  install -Dm644 omarchy-jetson-shell.service \
+    "$pkgdir/usr/lib/systemd/user/omarchy-jetson-shell.service"
+  install -Dm644 default-shell.json "$pkgdir/usr/share/omarchy-jetson/default-shell.json"
+  install -Dm644 default-menu-extension.jsonc \
+    "$pkgdir/usr/share/omarchy-jetson/default-menu-extension.jsonc"
+
+  install -Dm755 omarchy-jetson-theme-set "$pkgdir/usr/bin/omarchy-jetson-theme-set"
+  install -Dm755 omarchy-terminal-context "$pkgdir/usr/bin/omarchy-terminal-context"
+  install -Dm644 terminal-context.bashrc "$pkgdir/usr/share/omarchy-jetson/terminal-context.bashrc"
+  install -Dm755 omarchy-jetson-reload-hyprland "$pkgdir/usr/lib/omarchy-jetson/reload-hyprland"
+
+  install -Dm644 20-omarchy-jetson "$pkgdir/usr/share/uwsm/env.d/20-omarchy-jetson"
+
+  # Temporary: upstream's post-4.0.4 Qt 6.12 fix, re-applied after any omarchy
+  # install/upgrade only while the installed release lacks it.
+  install -Dm755 omarchy-jetson-qt612-shell-fix "$pkgdir/usr/lib/omarchy-jetson/qt612-shell-fix"
+  install -Dm644 90-omarchy-jetson-qt612-shell-fix.hook \
+    "$pkgdir/usr/share/libalpm/hooks/90-omarchy-jetson-qt612-shell-fix.hook"
+  install -Dm644 omarchy-jetson.sh "$pkgdir/etc/profile.d/omarchy-jetson.sh"
+
+  install -Dm644 "$upstream/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/OMARCHY-LICENSE"
+  install -Dm644 PROJECT-LICENSE "$pkgdir/usr/share/licenses/$pkgname/PROJECT-LICENSE"
+}

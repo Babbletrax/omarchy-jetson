@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+# jq programs are intentionally single-quoted; their $variables belong to jq.
+# shellcheck disable=SC2016
+set -Eeuo pipefail
+
+config_home=${XDG_CONFIG_HOME:-$HOME/.config}
+config_file=${OMARCHY_BAR_CONFIG:-$config_home/waybar/config.jsonc}
+state_dir=$config_home/omarchy-jetson
+state_file=${OMARCHY_BAR_STATE:-$state_dir/bar.json}
+style_file=${OMARCHY_BAR_STYLE:-$state_dir/waybar.css}
+waybar_command=${OMARCHY_WAYBAR_COMMAND:-waybar}
+
+die() { printf 'ERROR %s\n' "$*" >&2; exit 2; }
+
+ensure_state() {
+  install -d -m 700 "$state_dir"
+  [[ -f $state_file ]] || printf '{"mode":"visible"}\n' >"$state_file"
+  jq -e '.mode == "visible" or .mode == "autohide" or .mode == "disabled"' "$state_file" >/dev/null ||
+    die "invalid bar state: $state_file"
+}
+
+atomic_jq() {
+  local target=$1 filter=$2 temporary
+  temporary=$target.tmp
+  shift 2
+  jq "$@" "$filter" "$target" >"$temporary"
+  jq -e . "$temporary" >/dev/null
+  chmod --reference="$target" "$temporary"
+  mv -f "$temporary" "$target"
+}
+
+module_details() {
+  case $1 in
+    workspaces) printf 'modules-left\thyprland/workspaces\n' ;;
+    window) printf 'modules-left\thyprland/window\n' ;;
+    clock) printf 'modules-center\tclock\n' ;;
+    cpu) printf 'modules-right\tcpu\n' ;;
+    memory) printf 'modules-right\tmemory\n' ;;
+    network) printf 'modules-right\tnetwork\n' ;;
+    audio) printf 'modules-right\tpulseaudio\n' ;;
+    notifications) printf 'modules-right\tcustom/notifications\n' ;;
+    tray) printf 'modules-right\ttray\n' ;;
+    *) die "unknown bar module: $1" ;;
+  esac
+}
+
+configure_visibility() {
+  local mode=$1 hidden=false
+  [[ $mode == autohide ]] && hidden=true
+  atomic_jq "$config_file" '.start_hidden=$hidden | ."on-sigusr1"="toggle"' --argjson hidden "$hidden"
+}
+
+normalize_defaults() {
+  [[ -r $config_file ]] || die "missing Waybar configuration: $config_file"
+  atomic_jq "$config_file" '
+    .pulseaudio.format="{icon}" |
+    .pulseaudio."tooltip-format"="Volume {volume}%" |
+    .pulseaudio."format-muted"="󰝟" |
+    ."hyprland/workspaces"."disable-scroll"=true |
+    ."hyprland/workspaces"."all-outputs"=true'
+}
+
+stop_bar() {
+  systemctl --user stop omarchy-jetson-waybar.service 2>/dev/null || true
+  pkill -x waybar 2>/dev/null || true
+  for _ in {1..30}; do pgrep -x waybar >/dev/null 2>&1 || return 0; sleep 0.05; done
+  die 'Waybar did not stop within 1.5 seconds'
+}
+
+start_bar() {
+  pgrep -x waybar >/dev/null 2>&1 && return
+  systemd-run --user --quiet --collect --unit=omarchy-jetson-waybar.service \
+    --property=Restart=on-failure --property=RestartSec=2 -- \
+    "$waybar_command" -c "$config_file" -s "$style_file"
+  for _ in {1..30}; do pgrep -x waybar >/dev/null 2>&1 && return 0; sleep 0.05; done
+  die 'Waybar did not start within 1.5 seconds'
+}
+
+apply_state() {
+  local mode
+  ensure_state
+  normalize_defaults
+  mode=$(jq -r .mode "$state_file")
+  configure_visibility "$mode"
+  [[ ${OMARCHY_BAR_DRY_RUN:-0} == 1 ]] && return
+  stop_bar
+  [[ $mode == disabled ]] || start_bar
+  logger --tag omarchy-bar -- "event=apply mode=$mode" 2>/dev/null || true
+}
+
+set_mode() {
+  local mode=$1
+  case $mode in visible|autohide|disabled) ;; *) die 'mode must be visible, autohide or disabled' ;; esac
+  ensure_state
+  atomic_jq "$state_file" '.mode=$mode' --arg mode "$mode"
+  apply_state
+}
+
+set_module() {
+  local name=$1 enabled=$2 section id details
+  [[ -r $config_file ]] || die "missing Waybar configuration: $config_file"
+  details=$(module_details "$name")
+  IFS=$'\t' read -r section id <<<"$details"
+  case $enabled in
+    on)
+      atomic_jq "$config_file" '
+        ."modules-left" -= [$id] | ."modules-center" -= [$id] | ."modules-right" -= [$id] |
+        .[$section] += [$id]' --arg id "$id" --arg section "$section"
+      ;;
+    off)
+      atomic_jq "$config_file" '
+        ."modules-left" -= [$id] | ."modules-center" -= [$id] | ."modules-right" -= [$id]' --arg id "$id"
+      ;;
+    *) die 'module state must be on or off' ;;
+  esac
+  apply_state
+}
+
+list_modules() {
+  local name section id details enabled
+  for name in workspaces window clock cpu memory network audio notifications tray; do
+    details=$(module_details "$name")
+    IFS=$'\t' read -r section id <<<"$details"
+    enabled=$(jq -r --arg id "$id" '[."modules-left"[], ."modules-center"[], ."modules-right"[]] | index($id) != null' "$config_file")
+    printf '%s=%s\n' "$name" "$enabled"
+  done
+}
+
+case ${1:-status} in
+  apply) apply_state ;;
+  mode) set_mode "${2:-}" ;;
+  module) set_module "${2:-}" "${3:-}" ;;
+  modules) list_modules ;;
+  toggle)
+    if pgrep -x waybar >/dev/null 2>&1; then pkill -USR1 -x waybar
+    else configure_visibility visible; start_bar
+    fi
+    ;;
+  status) ensure_state; printf 'mode=%s\n' "$(jq -r .mode "$state_file")"; list_modules ;;
+  *) printf 'Usage: omarchy-jetson-bar {status|apply|toggle|mode visible|autohide|disabled|module NAME on|off|modules}\n' >&2; exit 2 ;;
+esac

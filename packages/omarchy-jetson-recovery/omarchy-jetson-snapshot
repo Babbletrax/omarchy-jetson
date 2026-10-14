@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+snapshot_root=${OMARCHY_SNAPSHOT_ROOT:-/var/lib/omarchy-jetson/snapshots}
+source_root=${OMARCHY_SNAPSHOT_SOURCE:-/}
+rsync_command=${OMARCHY_SNAPSHOT_RSYNC:-rsync}
+testing=${OMARCHY_SNAPSHOT_TESTING:-false}
+
+die() { printf 'ERROR %s\n' "$*" >&2; exit 2; }
+valid_name() { [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] || die 'snapshot name must contain only letters, digits, dot, underscore, or hyphen'; }
+require_root() { [[ $testing == true || $EUID == 0 ]] || die 'snapshot operations require root'; }
+
+excludes=(
+  --exclude=/dev/*** --exclude=/proc/*** --exclude=/sys/***
+  --exclude=/run/*** --exclude=/tmp/*** --exclude=/mnt/***
+  --exclude=/media/*** --exclude=/lost+found
+  --exclude=/var/lib/omarchy-jetson/snapshots/***
+)
+
+create_snapshot() {
+  local name=$1 destination temporary latest=''
+  local link_args=()
+  valid_name "$name"; require_root
+  [[ $source_root == /* && -d $source_root ]] || die 'snapshot source must be an absolute directory'
+  install -d -m 700 "$snapshot_root"
+  destination=$snapshot_root/$name
+  [[ ! -e $destination ]] || die 'snapshot already exists'
+  temporary=$snapshot_root/.$name.incomplete
+  [[ ! -e $temporary ]] || die 'incomplete snapshot already exists; inspect and remove it explicitly'
+  if [[ -L $snapshot_root/latest ]]; then
+    latest=$(readlink "$snapshot_root/latest")
+    [[ $latest =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ && -d $snapshot_root/$latest/root ]] || die 'latest snapshot link is invalid'
+    link_args=(--link-dest="$snapshot_root/$latest/root")
+  fi
+  install -d -m 700 "$temporary/root"
+  "$rsync_command" -aHAX --numeric-ids --one-file-system --delete \
+    "${excludes[@]}" "${link_args[@]}" "$source_root/" "$temporary/root/"
+  (
+    cd "$temporary/root"
+    find . -xdev -type f -printf '%P\0' | sort -z | xargs -0r sha256sum
+  ) >"$temporary/SHA256SUMS"
+  jq -n --arg name "$name" --arg created "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg source "$source_root" '{schema:1,name:$name,created_at:$created,source:$source}' >"$temporary/manifest.json"
+  mv "$temporary" "$destination"
+  ln -sfn "$name" "$snapshot_root/latest"
+  printf 'Created snapshot %s\n' "$destination"
+}
+
+restore_snapshot() {
+  local name=$1 target=$2 confirmation=${3:-} source
+  valid_name "$name"; require_root
+  [[ $confirmation == --confirmed ]] || die 'restore requires --confirmed'
+  [[ $target == /* && $target != / && -d $target ]] || die 'restore target must be an absolute mounted directory other than /'
+  [[ -f $target/.omarchy-jetson-restore-target ]] || die 'restore target marker is missing'
+  source=$snapshot_root/$name/root
+  [[ -d $source && -f $snapshot_root/$name/manifest.json ]] || die 'snapshot is incomplete or missing'
+  (cd "$source" && sha256sum --check "$snapshot_root/$name/SHA256SUMS") >/dev/null || die 'snapshot checksum verification failed'
+  "$rsync_command" -aHAX --numeric-ids --one-file-system --delete \
+    "${excludes[@]}" "$source/" "$target/"
+  printf 'Restored snapshot %s to %s\n' "$name" "$target"
+}
+
+case ${1:-list} in
+  create) (($# == 2)) || die 'usage: create NAME'; create_snapshot "$2" ;;
+  restore) (($# == 4)) || die 'usage: restore NAME TARGET --confirmed'; restore_snapshot "$2" "$3" "$4" ;;
+  list)
+    [[ -d $snapshot_root ]] || exit 0
+    find "$snapshot_root" -mindepth 2 -maxdepth 2 -name manifest.json -type f -print0 |
+      sort -z | xargs -0r jq -r '[.name,.created_at,.source] | @tsv'
+    ;;
+  *) die 'usage: omarchy-jetson-snapshot {create NAME|list|restore NAME TARGET --confirmed}' ;;
+esac

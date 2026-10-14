@@ -1,0 +1,24 @@
+# Maintainer: omarchy-jetson contributors
+
+pkgname=omarchy-jetson-input
+pkgver=0.1.0
+pkgrel=2
+pkgdesc='Virtual keyboard and pointer for NVIDIA Jetson AGX Orin, independent of USB HID'
+arch=('any')
+url='https://github.com/OWNER/omarchy-jetson'
+license=('MIT')
+depends=('bash' 'hyprland')
+optdepends=(
+  'wtype: virtual keyboard through virtual-keyboard-v1'
+  'wlrctl: virtual pointer through wlr-virtual-pointer'
+)
+
+# A separate package: virtual input is Jetson-specific and independent of the
+# upstream Omarchy binding tree (package `omarchy`).
+source=('omarchy-jetson-input' "PROJECT-LICENSE::file://${startdir}/../../LICENSE")
+sha256sums=('4870d95bf5a1e5e5453ec08b988738821dd879e0711d9cad57d704f56a5312be' '83cfe731d9126f1c55f3663e7c6e51e37267420bd92cfeafcb8ab96d2a9c12a2')
+
+package() {
+  install -Dm755 omarchy-jetson-input "$pkgdir/usr/bin/omarchy-jetson-input"
+  install -Dm644 PROJECT-LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

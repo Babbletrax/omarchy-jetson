@@ -1,0 +1,242 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly state_dir="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy-jetson"
+readonly state_file="$state_dir/appearance.json"
+readonly theme_root="${OMARCHY_THEME_ROOT:-/usr/share/omarchy-jetson/themes}"
+# Stock Omarchy points this link at the current theme's background.
+readonly default_background="${OMARCHY_DEFAULT_BACKGROUND:-${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/current/background}"
+
+log() { logger --tag omarchy-appearance -- "level=$1 ${*:2}" 2>/dev/null || true; }
+die() { log error "$*"; printf 'omarchy-jetson-appearance: %s\n' "$*" >&2; exit 2; }
+
+read_state() {
+  local state
+  if [[ -f $state_file ]]; then
+    state=$(jq --arg background "$default_background" '
+      . + {
+        theme: (.theme // "dark"),
+        ui_scale: (.ui_scale // "1"),
+        bar_text_size: (.bar_text_size // "13"),
+        font_family: (.font_family // "JetBrainsMono Nerd Font"),
+        background: (.background // $background)
+      }' "$state_file") || die 'invalid-state'
+    jq -e '(.theme == "dark" or .theme == "light") and
+      (.ui_scale == "1" or .ui_scale == "1.25" or .ui_scale == "1.5" or
+       .ui_scale == "1.75" or .ui_scale == "2") and
+      (.bar_text_size == "11" or .bar_text_size == "12" or
+       .bar_text_size == "13" or .bar_text_size == "14" or
+       .bar_text_size == "16") and
+      (.font_family == "JetBrainsMono Nerd Font" or
+       .font_family == "Noto Sans" or .font_family == "Noto Sans Mono") and
+      (.background | type == "string" and length > 0)' <<<"$state" >/dev/null ||
+      die 'invalid-state'
+    printf '%s\n' "$state"
+  else
+    jq -n --arg background "$default_background" \
+      '{theme:"dark", ui_scale:"1", bar_text_size:"13",
+        font_family:"JetBrainsMono Nerd Font", background:$background}'
+  fi
+}
+
+menu_font() {
+  local scale family
+  scale=$(read_state | jq -r .ui_scale)
+  family=$(read_state | jq -r .font_family)
+  case "$scale" in
+    1) printf '%s:size=16' "$family" ;; 1.25) printf '%s:size=20' "$family" ;;
+    1.5) printf '%s:size=24' "$family" ;; 1.75) printf '%s:size=28' "$family" ;;
+    2) printf '%s:size=32' "$family" ;;
+  esac
+}
+
+choose() {
+  local prompt=$1 config_args=()
+  [[ -r $state_dir/fuzzel.ini ]] && config_args=(--config "$state_dir/fuzzel.ini")
+  fuzzel "${config_args[@]}" --dmenu --only-match --minimal-lines --lines=12 --width=58 \
+    --font="$(menu_font)" --prompt="$prompt > " --with-nth=2 --accept-nth=1
+}
+
+validate_background() {
+  local path=$1 mime
+  [[ $path == /* && -f $path && -r $path ]] || die 'background-not-readable'
+  [[ $path != *$'\n'* && $path != *$'\t'* && $path != *"'"* ]] ||
+    die 'background-path-unsupported'
+  mime=$(file --brief --mime-type -- "$path")
+  [[ $mime == image/png || $mime == image/jpeg || $mime == image/webp ]] ||
+    die "unsupported-background-type=$mime"
+}
+
+hypr_exec() {
+  local command=$1 encoded
+  encoded=$(jq -Rn --arg command "$command" '$command')
+  hyprctl eval "hl.exec_cmd($encoded)" | grep -Fxq ok ||
+    die 'hyprland-exec-failed'
+}
+
+persist_state() {
+  local theme=$1 scale=$2 bar_text_size=$3 font_family=$4 background=$5 temporary
+  mkdir -p "$state_dir"
+  temporary=$(mktemp "$state_dir/.appearance.XXXXXX")
+  jq -n --arg theme "$theme" --arg scale "$scale" \
+    --arg bar_text_size "$bar_text_size" --arg font_family "$font_family" \
+    --arg background "$background" \
+    '{theme:$theme, ui_scale:$scale, bar_text_size:$bar_text_size,
+      font_family:$font_family, background:$background}' >"$temporary"
+  chmod 600 "$temporary"
+  mv -f "$temporary" "$state_file"
+}
+
+apply_state() {
+  local state theme scale bar_text_size font_family background theme_dir
+  state=$(read_state)
+  theme=$(jq -r .theme <<<"$state")
+  scale=$(jq -r .ui_scale <<<"$state")
+  bar_text_size=$(jq -r .bar_text_size <<<"$state")
+  font_family=$(jq -r .font_family <<<"$state")
+  background=$(jq -r .background <<<"$state")
+  theme_dir="$theme_root/$theme"
+  [[ -r $theme_dir/waybar.css ]] || die "theme-missing=$theme"
+  validate_background "$background"
+
+  mkdir -p "$state_dir"
+  awk -v size="$bar_text_size" -v family="$font_family" \
+    '{gsub(/@BAR_TEXT_SIZE@/, size); gsub(/@FONT_FAMILY@/, family); print}' \
+    "$theme_dir/waybar.css" >"$state_dir/waybar.css.tmp"
+  mv -f "$state_dir/waybar.css.tmp" "$state_dir/waybar.css"
+
+  if [[ $theme == dark ]]; then
+    printf '%s\n' '[colors]' 'background=11131af5' 'text=c0caf5ff' 'match=7dcfffff' \
+      'selection=7aa2f7ff' 'selection-text=11131aff' 'border=7aa2f7ff' >"$state_dir/fuzzel.ini.tmp"
+  else
+    printf '%s\n' '[colors]' 'background=f8fafcf5' 'text=172033ff' 'match=0369a1ff' \
+      'selection=2563ebff' 'selection-text=ffffffff' 'border=2563ebff' >"$state_dir/fuzzel.ini.tmp"
+  fi
+  mv -f "$state_dir/fuzzel.ini.tmp" "$state_dir/fuzzel.ini"
+
+  if command -v gsettings >/dev/null 2>&1 &&
+     gsettings writable org.gnome.desktop.interface color-scheme 2>/dev/null | grep -Fxq true; then
+    if [[ $theme == dark ]]; then
+      gsettings set org.gnome.desktop.interface color-scheme prefer-dark ||
+        log warning 'event=gtk-theme-failed theme=dark'
+    else
+      gsettings set org.gnome.desktop.interface color-scheme prefer-light ||
+        log warning 'event=gtk-theme-failed theme=light'
+    fi
+  fi
+
+  if command -v hyprctl >/dev/null 2>&1; then
+    if [[ $theme == dark ]]; then
+      hyprctl eval 'hl.config({ general = { col = { active_border = "rgba(7aa2f7ee)", inactive_border = "rgba(414868aa)" } } })' >/dev/null
+    else
+      hyprctl eval 'hl.config({ general = { col = { active_border = "rgba(2563ebee)", inactive_border = "rgba(94a3b8aa)" } } })' >/dev/null
+    fi
+    # The wallpaper belongs to the omarchy.background shell plugin, as it does
+    # upstream: point the state link at the image and the plugin repaints every
+    # output. A second renderer here only creates two sources of truth that can
+    # disagree, which is what left a stale wallpaper over a changed theme.
+    local background_link=${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/current/background
+    install -d -m 700 "${background_link%/*}"
+    ln -nsf "$background" "$background_link"
+    pkill -x swaybg 2>/dev/null || true
+  fi
+  if [[ ${OMARCHY_APPEARANCE_DRY_RUN:-0} != 1 ]] && pgrep -x waybar >/dev/null 2>&1; then
+    omarchy-jetson-bar apply
+  fi
+  log info "event=apply theme=$theme ui_scale=$scale bar_text_size=$bar_text_size font_family=$(printf '%s' "$font_family" | tr ' ' _) background_sha256=$(sha256sum "$background" | cut -d' ' -f1)"
+}
+
+set_field() {
+  local field=$1 value=$2 state theme scale bar_text_size font_family background
+  state=$(read_state)
+  theme=$(jq -r .theme <<<"$state")
+  scale=$(jq -r .ui_scale <<<"$state")
+  bar_text_size=$(jq -r .bar_text_size <<<"$state")
+  font_family=$(jq -r .font_family <<<"$state")
+  background=$(jq -r .background <<<"$state")
+  case "$field" in
+    theme)
+      [[ $value == dark || $value == light ]] || die "invalid-theme=$value"
+      theme=$value
+      ;;
+    ui-scale)
+      [[ $value =~ ^(1|1\.25|1\.5|1\.75|2)$ ]] || die "invalid-ui-scale=$value"
+      scale=$value
+      ;;
+    bar-text-size)
+      [[ $value =~ ^(11|12|13|14|16)$ ]] || die "invalid-bar-text-size=$value"
+      bar_text_size=$value
+      ;;
+    font-family)
+      [[ $value == 'JetBrainsMono Nerd Font' || $value == 'Noto Sans' ||
+         $value == 'Noto Sans Mono' ]] || die "invalid-font-family=$value"
+      font_family=$value
+      ;;
+    background)
+      validate_background "$value"
+      background=$value
+      ;;
+    *) die "invalid-field=$field" ;;
+  esac
+  persist_state "$theme" "$scale" "$bar_text_size" "$font_family" "$background"
+  apply_state
+}
+
+background_rows() {
+  local directory path
+  for directory in "$HOME/Pictures" /usr/share/backgrounds/omarchy-jetson; do
+    [[ -d $directory ]] || continue
+    while IFS= read -r -d '' path; do
+      [[ $path != *$'\n'* && $path != *$'\t'* && $path != *"'"* ]] || continue
+      case "$(file --brief --mime-type -- "$path")" in image/png|image/jpeg|image/webp)
+        printf '%s\t%s\n' "$path" "${path#"$HOME"/}" ;;
+      esac
+    done < <(find "$directory" -type f -print0)
+  done
+}
+
+menu() {
+  local action value
+  action=$(printf '%s\n' $'theme\tLight or dark theme' $'ui-scale\tUI and text scale' \
+    $'bar-text-size\tTop bar text size' $'font-family\tDesktop font' \
+    $'background\tBackground image' | choose 'Appearance') || return 0
+  case "$action" in
+    theme)
+      value=$(printf '%s\n' $'dark\tDark' $'light\tLight' | choose 'Theme') || return 0
+      set_field theme "$value"
+      ;;
+    ui-scale)
+      value=$(printf '%s\n' $'1\t100%' $'1.25\t125%' $'1.5\t150%' $'1.75\t175%' $'2\t200%' |
+        choose 'UI and text scale') || return 0
+      set_field ui-scale "$value"
+      ;;
+    bar-text-size)
+      value=$(printf '%s\n' $'11\tSmall' $'12\tCompact' $'13\tDefault' \
+        $'14\tLarge' $'16\tExtra large' | choose 'Top bar text size') || return 0
+      set_field bar-text-size "$value"
+      ;;
+    font-family)
+      value=$(printf '%s\n' $'JetBrainsMono Nerd Font\tJetBrains Mono' \
+        $'Noto Sans\tNoto Sans' $'Noto Sans Mono\tNoto Sans Mono' |
+        choose 'Desktop font') || return 0
+      set_field font-family "$value"
+      ;;
+    background)
+      value=$(background_rows | choose 'Background') || return 0
+      set_field background "$value"
+      ;;
+  esac
+}
+
+case "${1:-menu}" in
+  menu) menu ;;
+  current) read_state ;;
+  apply-saved) apply_state ;;
+  set-theme) set_field theme "${2:?theme required}" ;;
+  set-ui-scale) set_field ui-scale "${2:?scale required}" ;;
+  set-bar-text-size) set_field bar-text-size "${2:?size required}" ;;
+  set-font-family) set_field font-family "${2:?font required}" ;;
+  set-background) set_field background "${2:?path required}" ;;
+  *) die "unknown-command=${1:-}" ;;
+esac

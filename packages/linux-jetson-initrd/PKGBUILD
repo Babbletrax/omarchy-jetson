@@ -1,0 +1,22 @@
+# Maintainer: omarchy-jetson contributors
+
+pkgname=linux-jetson-initrd
+pkgver=6.8.12.1021
+pkgrel=1
+pkgdesc='Reproducible NVIDIA initrd with AGX Orin NVMe boot modules'
+arch=('aarch64')
+url='https://developer.nvidia.com/embedded/jetson-linux'
+license=('LicenseRef-NVIDIA-Jetson-Linux')
+depends=('linux-jetson=6.8.12.1021')
+options=('!strip' '!debug')
+
+_kernelrelease='6.8.12-1021-tegra'
+_initrd=${JETSON_INITRD:?Set JETSON_INITRD to the generated initrd path}
+
+source=("initrd::file://${_initrd}")
+noextract=('initrd')
+sha256sums=('9196aa1422b2638942c8fb08f4cd2ea93bba19ff50875f9439c855405763724b')
+
+package() {
+  install -Dm644 initrd "$pkgdir/boot/initrd-${_kernelrelease}"
+}

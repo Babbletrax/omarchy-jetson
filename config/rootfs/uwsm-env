@@ -1,0 +1,22 @@
+# Select the Tegra display controller on Jetson AGX Orin. The numeric
+# /dev/dri/cardN index is decided by probe order between 13e00000.host1x
+# (render-only) and 13800000.display (KMS), so it moves between boots; pinning
+# a number makes aquamarine find no GPU and Hyprland abort at CBackend::create.
+# The by-path name is the device, not its enumeration order.
+export AQ_DRM_DEVICES=/dev/dri/by-path/platform-13800000.display-card
+
+# Expose OMARCHY_PATH and mise-managed tools to the graphical session, matching
+# upstream's default/bash/env-bootstrap. Upstream Omarchy's commands are on
+# /usr/bin; Jetson hardware overrides in /usr/lib/omarchy-jetson/bin are put
+# first by /usr/share/uwsm/env.d/20-omarchy-jetson. User tools live in
+# ~/.local/bin and mise shims.
+export OMARCHY_PATH="${OMARCHY_PATH:-/usr/share/omarchy}"
+case ":$PATH:" in
+  *":$HOME/.local/bin:"*) ;;
+  *) PATH="$HOME/.local/bin${PATH:+:$PATH}" ;;
+esac
+case ":$PATH:" in
+  *":$HOME/.local/share/mise/shims:"*) ;;
+  *) PATH="${PATH:+$PATH:}$HOME/.local/share/mise/shims" ;;
+esac
+export PATH

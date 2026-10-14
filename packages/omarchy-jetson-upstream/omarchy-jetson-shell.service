@@ -1,0 +1,19 @@
+[Unit]
+Description=Omarchy shell (upstream) for NVIDIA Jetson AGX Orin
+Documentation=https://github.com/omacom/omarchy/tree/master/shell
+PartOf=graphical-session.target
+After=graphical-session.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+Environment=OMARCHY_PATH=/usr/share/omarchy
+Environment=QS_DISABLE_FILE_WATCHER=1
+Environment=QS_NO_RELOAD_POPUP=1
+ExecStart=/usr/bin/omarchy-jetson-shell run
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target

@@ -1,0 +1,46 @@
+# Maintainer: omarchy-jetson contributors
+
+pkgname=linux-jetson
+pkgver=6.8.12.1021
+pkgrel=2
+pkgdesc='Pinned NVIDIA Jetson Linux kernel for AGX Orin P3701-0005/P3737'
+arch=('aarch64')
+url='https://developer.nvidia.com/embedded/jetson-linux'
+license=('LicenseRef-NVIDIA-Jetson-Linux')
+provides=('linux-jetson=6.8.12-1021')
+options=('!strip' '!debug')
+
+_kernelrelease='6.8.12-1021-tegra'
+_board_dtb='tegra234-p3737-0000+p3701-0005-nv.dtb'
+_bsp_root=${JETSON_BSP_DIR:?Set JETSON_BSP_DIR to the extracted Linux_for_Tegra directory}
+
+source=(
+  "Image::file://${_bsp_root}/kernel/Image"
+  "${_board_dtb}::file://${_bsp_root}/kernel/dtb/${_board_dtb}"
+  "kernel_supplements.tbz2::file://${_bsp_root}/kernel/kernel_supplements.tbz2"
+  "kernel_oot_modules.tbz2::file://${_bsp_root}/kernel/kernel_oot_modules.tbz2"
+  "LICENSE::file://${_bsp_root}/kernel/LICENSE"
+)
+noextract=('kernel_supplements.tbz2' 'kernel_oot_modules.tbz2')
+sha256sums=(
+  '8e3738af56e08768157ef7fd225638d35a4f06e18201102338c6f537f866761e'
+  '14824cd64558a4659ba366387452fdeeeeeed3bab2b59a278eddbfaead1be736'
+  'c73adee0a052273a74c435c5c058e357d738f9e353ca6a390f09c3b0da8c09dc'
+  'de42a8b0333c94800b836e6aa4e0df525933f47f0600ecca6a164b7b78640c07'
+  'ee21f6c142a10bf8752563812da87bb98985daa6ad2e88794be31078cc32d604'
+)
+
+package() {
+  install -Dm644 Image "$pkgdir/boot/Image-${_kernelrelease}"
+  install -Dm644 "$_board_dtb" "$pkgdir/boot/dtb/$_board_dtb"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+
+  install -d "$srcdir/kernel-supplements" "$pkgdir/usr/lib/modules"
+  bsdtar -xf kernel_supplements.tbz2 -C "$srcdir/kernel-supplements" lib/modules
+  cp -a "$srcdir/kernel-supplements/lib/modules/." "$pkgdir/usr/lib/modules/"
+  bsdtar -xf kernel_oot_modules.tbz2 -C "$pkgdir" usr/lib/modules
+
+  test -d "$pkgdir/usr/lib/modules/$_kernelrelease"
+  test -f "$pkgdir/usr/lib/modules/$_kernelrelease/updates/drivers/net/ethernet/nvidia/nvethernet/nvethernet.ko"
+  test -f "$pkgdir/usr/lib/modules/$_kernelrelease/updates/drivers/pci/controller/pcie-tegra264.ko"
+}

@@ -1,0 +1,4 @@
+# Arch Linux ARM stores the canonical Jetson CUDA driver under /opt.
+lib, /opt/nvidia/l4t-gpu-libs/nvgpu/libcuda.so.1.1
+sym, /opt/nvidia/l4t-gpu-libs/nvgpu/libcuda.so.1
+sym, /opt/nvidia/l4t-gpu-libs/nvgpu/libcuda.so

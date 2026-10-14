@@ -1,0 +1,27 @@
+# Maintainer: omarchy-jetson contributors
+
+pkgname=xdg-terminal-exec
+pkgver=0.14.3
+pkgrel=1
+pkgdesc='XDG terminal execution helper, required by the Omarchy screensaver launcher'
+arch=('any')
+url='https://gitlab.freedesktop.org/Vladimir-csp/xdg-terminal-exec'
+license=('GPL-3.0-or-later')
+depends=('sh')
+
+# omarchy-launch-screensaver resolves which terminal to run the effects in with
+# 'xdg-terminal-exec --print-id'. Without it the launcher exits quietly and the
+# screensaver never appears; the Orin already registers foot.desktop, so this is
+# the only missing piece.
+source=("${pkgname}-v${pkgver}.tar.gz::${url}/-/archive/v${pkgver}/${pkgname}-v${pkgver}.tar.gz")
+sha256sums=('bfa291f6ad70fc61abd0b45510b799cb24c1c11f0b5cdc7b7538169688f1df79')
+
+package() {
+  cd "$pkgname-v$pkgver"
+  install -Dm755 xdg-terminal-exec "$pkgdir/usr/bin/xdg-terminal-exec"
+  install -Dm644 xdg-terminals.list "$pkgdir/usr/share/$pkgname/xdg-terminals.list"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  if [[ -f xdg-terminal-exec.1 ]]; then
+    install -Dm644 xdg-terminal-exec.1 "$pkgdir/usr/share/man/man1/xdg-terminal-exec.1"
+  fi
+}

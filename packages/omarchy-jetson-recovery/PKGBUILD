@@ -1,0 +1,15 @@
+# Maintainer: omarchy-jetson contributors
+pkgname=omarchy-jetson-recovery
+pkgver=0.1.0
+pkgrel=4
+pkgdesc='Incremental ext4-safe offline recovery snapshots for Omarchy Jetson'
+arch=('aarch64')
+url='https://github.com/OWNER/omarchy-jetson'
+license=('MIT')
+depends=('bash' 'coreutils' 'findutils' 'jq' 'rsync')
+source=('omarchy-jetson-snapshot' "PROJECT-LICENSE::file://${startdir}/../../LICENSE")
+sha256sums=('e6fa9d132aa78e095fe15a29377b859e613e7f79d5149d393390ca382d1b21cd' '83cfe731d9126f1c55f3663e7c6e51e37267420bd92cfeafcb8ab96d2a9c12a2')
+package() {
+  install -Dm755 omarchy-jetson-snapshot "$pkgdir/usr/bin/omarchy-jetson-snapshot"
+  install -Dm644 PROJECT-LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

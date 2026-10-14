@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly runtime_dir="${XDG_RUNTIME_DIR:-/tmp}/omarchy-jetson"
+readonly state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-jetson"
+readonly pid_file="$runtime_dir/screenrecord.pid"
+readonly recording_file="$runtime_dir/screenrecord.path"
+readonly log_file="$state_dir/screenrecord.log"
+
+log() { logger --tag omarchy-screenrecord -- "level=$1 ${*:2}" 2>/dev/null || true; }
+die() { log error "$*"; printf 'omarchy-capture-screenrecording: %s\n' "$*" >&2; exit 2; }
+
+recording_pid() {
+  local pid file
+  [[ -r $pid_file && -r $recording_file ]] || return 1
+  read -r pid <"$pid_file"
+  read -r file <"$recording_file"
+  [[ $pid =~ ^[0-9]+$ && -r /proc/$pid/comm ]] || return 1
+  [[ $(<"/proc/$pid/comm") == wf-recorder ]] || return 1
+  tr '\0' '\n' <"/proc/$pid/cmdline" | grep -Fxq -- "$file" || return 1
+  printf '%s\n' "$pid"
+}
+
+stop_recording() {
+  local pid file waited=0
+  pid=$(recording_pid) || return 1
+  read -r file <"$recording_file"
+  kill -INT "$pid"
+  while kill -0 "$pid" 2>/dev/null && ((waited < 100)); do
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -TERM "$pid"
+    log warning "event=stop-timeout pid=$pid"
+    sleep 0.5
+  fi
+  rm -f "$pid_file" "$recording_file"
+  [[ -s $file ]] || die 'recording-output-missing'
+  ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height \
+    -of default=noprint_wrappers=1 "$file" >>"$log_file" 2>&1 || die 'recording-validation-failed'
+  log info "event=stop file_sha256=$(sha256sum "$file" | cut -d' ' -f1)"
+  omarchy-notification-send 'Screen recording saved' "${file##*/}" --exec xdg-open "$file" || true
+  printf '%s\n' "$file"
+}
+
+start_recording() {
+  local fullscreen=false desktop_audio=false microphone_audio=false output_dir file selection output
+  local audio_source='' pid waited=0
+  local capture_args=() audio_args=()
+  for argument in "$@"; do
+    case "$argument" in
+      --fullscreen) fullscreen=true ;;
+      --with-desktop-audio) desktop_audio=true ;;
+      --with-microphone-audio) microphone_audio=true ;;
+      *) die "unsupported-option=$argument" ;;
+    esac
+  done
+  recording_pid >/dev/null 2>&1 && die 'recording-already-active'
+  [[ $desktop_audio == false || $microphone_audio == false ]] ||
+    die 'simultaneous-desktop-and-microphone-audio-not-supported'
+
+  output_dir="${OMARCHY_SCREENRECORD_DIR:-${XDG_VIDEOS_DIR:-$HOME/Videos}}"
+  mkdir -p "$output_dir" "$runtime_dir" "$state_dir"
+  chmod 700 "$runtime_dir" "$state_dir"
+  file="$output_dir/screenrecording-$(date +'%Y-%m-%d_%H-%M-%S').mp4"
+
+  if [[ $fullscreen == true ]]; then
+    output=$(hyprctl monitors -j | jq -er '.[] | select(.focused == true) | .name')
+    capture_args=(-o "$output")
+  else
+    selection=$(omarchy-capture-region smart) || return 0
+    [[ $selection =~ ^-?[0-9]+,-?[0-9]+[[:space:]][0-9]+x[0-9]+$ ]] ||
+      die 'invalid-capture-region'
+    capture_args=(-g "$selection")
+  fi
+
+  if [[ $desktop_audio == true ]]; then
+    audio_source="$(pactl get-default-sink).monitor"
+  elif [[ $microphone_audio == true ]]; then
+    audio_source=$(pactl get-default-source)
+  fi
+  [[ -z $audio_source ]] || audio_args=(--audio="$audio_source" --audio-backend=pipewire)
+
+  : >"$log_file"
+  chmod 600 "$log_file"
+  wf-recorder "${capture_args[@]}" "${audio_args[@]}" --no-dmabuf -r 30 \
+    -c libx264 -p preset=veryfast -p crf=23 -f "$file" >>"$log_file" 2>&1 &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null && [[ ! -s $file ]] && ((waited < 50)); do
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  if ! kill -0 "$pid" 2>/dev/null; then
+    wait "$pid" || true
+    die "recorder-start-failed log=$log_file"
+  fi
+  printf '%s\n' "$pid" >"$pid_file"
+  printf '%s\n' "$file" >"$recording_file"
+  chmod 600 "$pid_file" "$recording_file"
+  log info "event=start pid=$pid mode=$([[ $fullscreen == true ]] && printf fullscreen || printf region) audio=$([[ -n $audio_source ]] && printf enabled || printf none)"
+  omarchy-notification-send 'Screen recording started' 'Use Alt+Print to stop.' -t 2500 || true
+}
+
+case "${1:-}" in
+  --stop-recording) stop_recording ;;
+  *) start_recording "$@" ;;
+esac

@@ -1,0 +1,10 @@
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = omarchy
+
+[Action]
+Description = Applying the upstream Qt 6.12 shell fix if this Omarchy release lacks it...
+When = PostTransaction
+Exec = /usr/lib/omarchy-jetson/qt612-shell-fix

@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh NVIDIA Jetson CDI specification file
+ConditionPathExists=/usr/bin/nvidia-ctk
+ConditionPathExists=/dev/nvhost-gpu
+
+[Service]
+Type=oneshot
+RuntimeDirectory=cdi
+RuntimeDirectoryPreserve=yes
+ExecStart=/usr/bin/nvidia-ctk cdi generate --mode=csv --csv.file=/etc/nvidia-container-runtime/host-files-for-container.d/devices.csv --csv.file=/etc/nvidia-container-runtime/host-files-for-container.d/drivers.csv --csv.file=/etc/nvidia-container-runtime/host-files-for-container.d/arch-linux.csv --library-search-path=/opt/nvidia/l4t-gpu-libs/nvgpu --output=/run/cdi/nvidia.yaml
+CapabilityBoundingSet=CAP_SYS_MODULE CAP_SYS_ADMIN CAP_MKNOD

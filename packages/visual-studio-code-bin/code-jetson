@@ -1,0 +1,2 @@
+#!/usr/bin/env sh
+exec /opt/visual-studio-code/bin/code --disable-gpu "$@"

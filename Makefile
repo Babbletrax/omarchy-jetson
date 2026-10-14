@@ -1,0 +1,22 @@
+.PHONY: check
+
+check:
+	./tests/static.sh
+	./tests/public-hygiene.sh
+	./tests/dependency-policy.sh
+	./tests/display-control.sh
+	./tests/screensaver-control.sh
+	./tests/shell-seeding.sh
+	./tests/upstream-pins.sh
+	./tests/appearance-control.sh
+	./tests/workspace-menu.sh
+	./tests/screenrecord-control.sh
+	./tests/session-control.sh
+	./tests/terminal-launch.sh
+	./tests/snapshot-recovery.sh
+	./tests/release-channel.sh
+	./tests/power-menu.sh
+	./tests/voice-control.sh
+	./tests/observability.sh
+	./tests/notifications.sh
+	./tests/bar-control.sh

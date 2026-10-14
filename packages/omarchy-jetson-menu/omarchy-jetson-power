@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+config=${OMARCHY_NVP_CONFIG:-/etc/nvpmodel.conf}
+nvpmodel=${OMARCHY_NVPMODEL:-/usr/sbin/nvpmodel}
+
+log() { logger --tag omarchy-jetson-power -- "level=$1 event=$2${3:+ $3}" 2>/dev/null || true; }
+models() { awk '/^< POWER_MODEL ID=[0-9]+ NAME=[^ ]+ >$/ { id=$3; sub("ID=", "", id); name=$4; sub("NAME=", "", name); print id "\t" name }' "$config"; }
+valid_mode() { models | awk -F '\t' -v wanted="$1" '$1 == wanted { found=1 } END { exit !found }'; }
+
+status() {
+  local query default
+  query=$(sudo -n "$nvpmodel" -q 2>&1 || true)
+  default=$(awk '/^< PM_CONFIG DEFAULT=[0-9]+ >$/ { value=$3; sub("DEFAULT=", "", value); print value; exit }' "$config")
+  printf 'Current NVIDIA power mode\n%s\n\n' "${query:-Unknown}"
+  printf 'Configured fallback mode ID: %s (not applied while current mode is unset)\n\n' "${default:-unknown}"
+  printf 'Available modes\n'
+  awk '
+    /^< POWER_MODEL/ { if (active) emit(); id=$3; sub("ID=", "", id); name=$4; sub("NAME=", "", name); active=1; cores=0; cpu="unknown"; gpu="unknown"; emc="unknown"; next }
+    active && /^CPU_ONLINE/ && $3 == 1 { cores++ }
+    active && /^CPU_A78_[0-9]+ MAX_FREQ/ && cpu == "unknown" { cpu=($3 == -1 ? "uncapped" : $3/1000 " MHz") }
+    active && /^GPU MAX_FREQ/ { gpu=($3 == -1 ? "uncapped" : $3/1000000 " MHz") }
+    active && /^EMC MAX_FREQ/ { emc=($3 == -1 ? "uncapped" : $3/1000000 " MHz") }
+    function emit() { printf "  %s: %s — %d CPU cores, CPU %s, GPU %s, EMC %s\n", id, name, cores, cpu, gpu, emc }
+    END { if (active) emit() }
+  ' "$config"
+  printf '\nFan policy: '
+  if command -v nvfancontrol >/dev/null 2>&1; then printf 'nvfancontrol available\n'; else printf 'unavailable in the installed R39.2.1 package\n'; fi
+  printf 'Mode changes may require a reboot. Automatic reboot is disabled.\n'
+}
+
+apply_mode() {
+  local mode=${1:-} acknowledgement=${2:-}
+  [[ $acknowledgement == --confirmed ]] || { printf 'Refusing mode change without --confirmed\n' >&2; return 2; }
+  valid_mode "$mode" || { printf 'Unknown power mode ID: %s\n' "$mode" >&2; return 2; }
+  log info mode-change-request "mode=$mode"
+  if output=$(sudo -n "$nvpmodel" -m "$mode" 2>&1); then
+    log info mode-change-complete "mode=$mode"
+    notify-send 'Jetson power mode changed' "$output" 2>/dev/null || true
+  else
+    status_code=$?
+    log error mode-change-failed "mode=$mode status=$status_code"
+    notify-send -u critical 'Jetson power mode change failed' "$output" 2>/dev/null || true
+    printf '%s\n' "$output" >&2
+    return "$status_code"
+  fi
+}
+
+menu() {
+  local selected confirmation
+  selected=$(models | fuzzel --dmenu --only-match --with-nth=2 --accept-nth=1 --prompt='Power mode > ') || return 0
+  confirmation=$(printf 'cancel\tCancel\nconfirm\tApply mode %s (may require reboot)\n' "$selected" |
+    fuzzel --dmenu --only-match --with-nth=2 --accept-nth=1 --prompt='Confirm > ') || return 0
+  [[ $confirmation == confirm ]] || return 0
+  apply_mode "$selected" --confirmed
+}
+
+case "${1:-status}" in
+  status) status ;;
+  list) models ;;
+  menu) menu ;;
+  apply) apply_mode "${2:-}" "${3:-}" ;;
+  *) printf 'Usage: omarchy-jetson-power [status|list|menu|apply ID --confirmed]\n' >&2; exit 2 ;;
+esac

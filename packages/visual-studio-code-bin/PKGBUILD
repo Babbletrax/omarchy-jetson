@@ -1,0 +1,50 @@
+# Maintainer: omarchy-jetson contributors
+
+pkgname=visual-studio-code-bin
+pkgver=1.136.0
+pkgrel=3
+pkgdesc='Microsoft Visual Studio Code official binary for AArch64'
+arch=('aarch64')
+url='https://code.visualstudio.com/'
+license=('custom: commercial')
+depends=('alsa-lib' 'gcc-libs' 'glibc' 'gnupg' 'gtk3' 'libnotify' 'libsecret' 'libxkbfile' 'libxss' 'lsof' 'nss' 'shared-mime-info' 'xdg-utils')
+provides=('code' 'vscode')
+conflicts=('code')
+options=('!strip' '!debug')
+
+source=(
+  "VSCode-linux-arm64-${pkgver}.tar.gz::https://update.code.visualstudio.com/${pkgver}/linux-arm64/stable"
+  'visual-studio-code.desktop'
+  'visual-studio-code.apparmor'
+  'code-jetson'
+)
+sha256sums=(
+  '5aa4393246cf0b37e8be57089da58f0979e4d1f5bc7961cee05b01c8af5420b1'
+  'c994cc2f953213b4f0c14e2044b09be68c315d08424cf1079e1ec0174a0198ee'
+  'ad9e905d522fd172680b6fee85fef70328f0689bf7250424a600892e0c3c3684'
+  'b3e6474f8acf86106dc43a8ac4243e01caeecc05dfd2fcc76b75d0806f121d9d'
+)
+
+package() {
+  install -d "$pkgdir/opt/visual-studio-code" "$pkgdir/usr/bin"
+  cp -a "$srcdir/VSCode-linux-arm64/." "$pkgdir/opt/visual-studio-code/"
+
+  install -Dm755 "$srcdir/code-jetson" "$pkgdir/usr/bin/code"
+  install -Dm644 "$srcdir/visual-studio-code.desktop" \
+    "$pkgdir/usr/share/applications/visual-studio-code.desktop"
+  install -Dm644 "$srcdir/visual-studio-code.apparmor" \
+    "$pkgdir/etc/apparmor.d/visual-studio-code"
+  install -Dm644 \
+    "$srcdir/VSCode-linux-arm64/resources/app/resources/linux/code.png" \
+    "$pkgdir/usr/share/pixmaps/visual-studio-code.png"
+  install -d "$pkgdir/usr/share/licenses/$pkgname"
+  ln -s /opt/visual-studio-code/resources/app/LICENSE.rtf \
+    "$pkgdir/usr/share/licenses/$pkgname/LICENSE.rtf"
+
+  test -x "$pkgdir/opt/visual-studio-code/code"
+  test -x "$pkgdir/opt/visual-studio-code/bin/code"
+  test -x "$pkgdir/usr/bin/code"
+  test -f "$pkgdir/etc/apparmor.d/visual-studio-code"
+  grep -Fq '"version": "1.136.0"' \
+    "$pkgdir/opt/visual-studio-code/resources/app/product.json"
+}

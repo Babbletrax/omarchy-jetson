@@ -1,0 +1,44 @@
+# Maintainer: omarchy-jetson contributors
+
+pkgname=1password-cli
+pkgver=2.39.0
+pkgrel=1
+pkgdesc='Official signed 1Password command-line tool for AArch64'
+arch=('aarch64')
+url='https://app-updates.agilebits.com/product_history/CLI2'
+license=('custom')
+makedepends=('gnupg')
+options=('!strip' '!debug')
+
+_signing_fingerprint='3FEF9748469ADBE15DA7CA80AC2D62742012EA22'
+source=(
+  "op_linux_arm64_v${pkgver}.zip::https://cache.agilebits.com/dist/1P/op2/pkg/v${pkgver}/op_linux_arm64_v${pkgver}.zip"
+  '1password-signing-key::https://downloads.1password.com/linux/keys/1password.asc'
+  'onepassword-cli.sysusers'
+  'onepassword-cli.tmpfiles'
+)
+sha256sums=(
+  '829baeff1c07e055cfa132031b1d9f2282ccdf5076258e482caf2fda70aea5d0'
+  'f39e7dd9dedc581ced85732832f217e0de5860a3b80279b5af4bc7c6d8157bae'
+  'b16679c5c0ff75389184c47f92c8e74d6a2ec985d0346fd37a35c8684ddae7b7'
+  'd0cf8642606aa5b3b4345dce1743cea96f9f4573511d4e473d7b2cca26570883'
+)
+
+check() {
+  local fingerprint
+  [[ $(file -b "$srcdir/op") == *'ARM aarch64'* ]]
+  fingerprint=$(gpg --show-keys --with-colons "$srcdir/1password-signing-key" |
+    awk -F: '$1 == "fpr" {print $10; exit}')
+  test "$fingerprint" = "$_signing_fingerprint"
+  gpg --batch --yes --dearmor \
+    --output "$srcdir/1password-keyring.gpg" "$srcdir/1password-signing-key"
+  gpgv --keyring "$srcdir/1password-keyring.gpg" "$srcdir/op.sig" "$srcdir/op"
+}
+
+package() {
+  install -Dm755 op "$pkgdir/usr/bin/op"
+  install -Dm644 "$srcdir/onepassword-cli.sysusers" \
+    "$pkgdir/usr/lib/sysusers.d/1password-cli.conf"
+  install -Dm644 "$srcdir/onepassword-cli.tmpfiles" \
+    "$pkgdir/usr/lib/tmpfiles.d/1password-cli.conf"
+}

@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+sys_root=${OMARCHY_SYS_ROOT:-/sys}
+proc_root=${OMARCHY_PROC_ROOT:-/proc}
+format=${1:-text}
+
+read_value() {
+  local path=$1 fallback=${2:-unavailable} value
+  if [[ -r $path ]]; then
+    for _ in 1 2 3; do
+      if value=$(tr -d '\0\n' <"$path" 2>/dev/null); then
+        printf '%s' "$value"
+        return
+      fi
+      sleep 0.02
+    done
+  fi
+  printf '%s' "$fallback"
+}
+
+thermal_millic() {
+  local wanted=$1 zone kind
+  for zone in "$sys_root"/class/thermal/thermal_zone*; do
+    [[ -r $zone/type && -r $zone/temp ]] || continue
+    kind=$(read_value "$zone/type")
+    [[ $kind == "$wanted" ]] && { read_value "$zone/temp"; return; }
+  done
+  printf unavailable
+}
+
+nvme_millic() {
+  local chip name device label input
+  for chip in "$sys_root"/class/hwmon/hwmon*; do
+    [[ -r $chip/name ]] || continue
+    name=$(read_value "$chip/name")
+    [[ $name == nvme ]] || continue
+    device=$(readlink -f "$chip/device" 2>/dev/null || true)
+    [[ $device == */nvme/nvme[0-9]* ]] || continue
+    for label in "$chip"/temp*_label; do
+      [[ -r $label ]] || continue
+      [[ $(read_value "$label") == Composite ]] || continue
+      input=${label%_label}_input
+      [[ -r $input ]] && { read_value "$input"; return; }
+    done
+  done
+  printf unavailable
+}
+
+mem_kib() {
+  local key=$1
+  awk -v key="$key" '$1 == key ":" {print $2; found=1} END {if (!found) print "unavailable"}' \
+    "$proc_root/meminfo" 2>/dev/null
+}
+
+gpu_devfreq="$sys_root/class/devfreq/17000000.gpu"
+emc_devfreq="$sys_root/class/devfreq/bwmgr"
+gpu_load_path="$sys_root/devices/platform/bus@0/17000000.gpu/load"
+
+cpu_temp=$(thermal_millic cpu-thermal)
+gpu_temp=$(thermal_millic gpu-thermal)
+nvme_temp=$(nvme_millic)
+gpu_load=$(read_value "$gpu_load_path")
+gpu_cur=$(read_value "$gpu_devfreq/cur_freq")
+gpu_max=$(read_value "$gpu_devfreq/max_freq")
+emc_cur=$(read_value "$emc_devfreq/cur_freq")
+emc_max=$(read_value "$emc_devfreq/max_freq")
+mem_total=$(mem_kib MemTotal)
+mem_available=$(mem_kib MemAvailable)
+swap_total=$(mem_kib SwapTotal)
+swap_free=$(mem_kib SwapFree)
+
+if [[ $format == --json ]]; then
+  jq -n \
+    --arg cpu_temp_millic "$cpu_temp" --arg gpu_temp_millic "$gpu_temp" \
+    --arg nvme_temp_millic "$nvme_temp" --arg gpu_load_permille "$gpu_load" \
+    --arg gpu_cur_hz "$gpu_cur" --arg gpu_max_hz "$gpu_max" \
+    --arg emc_cur_hz "$emc_cur" --arg emc_max_hz "$emc_max" \
+    --arg mem_total_kib "$mem_total" --arg mem_available_kib "$mem_available" \
+    --arg swap_total_kib "$swap_total" --arg swap_free_kib "$swap_free" \
+    '{cpu_temp_millic:$cpu_temp_millic,gpu_temp_millic:$gpu_temp_millic,
+      nvme_temp_millic:$nvme_temp_millic,gpu_load_permille:$gpu_load_permille,
+      gpu_clock_hz:{current:$gpu_cur_hz,max:$gpu_max_hz},
+      emc_clock_hz:{current:$emc_cur_hz,max:$emc_max_hz},
+      unified_memory_kib:{total:$mem_total_kib,available:$mem_available_kib},
+      zram_swap_kib:{total:$swap_total_kib,free:$swap_free_kib}}'
+elif [[ $format == text ]]; then
+  printf 'CPU temperature (cpu-thermal): %s mC\n' "$cpu_temp"
+  printf 'GPU temperature (gpu-thermal): %s mC\n' "$gpu_temp"
+  printf 'NVMe temperature (Composite): %s mC\n' "$nvme_temp"
+  printf 'GPU activity: %s permille\n' "$gpu_load"
+  printf 'GPU clock: %s / %s Hz\n' "$gpu_cur" "$gpu_max"
+  printf 'EMC clock: %s / %s Hz\n' "$emc_cur" "$emc_max"
+  printf 'Unified system/GPU memory: %s / %s KiB available\n' "$mem_available" "$mem_total"
+  printf 'zram swap: %s / %s KiB free\n' "$swap_free" "$swap_total"
+else
+  printf 'Usage: omarchy-jetson-status [text|--json]\n' >&2
+  exit 2
+fi

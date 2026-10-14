@@ -1,0 +1,22 @@
+# Maintainer: omarchy-jetson contributors
+
+pkgname=omarchy-jetson-observability
+pkgver=0.1.0
+pkgrel=5
+pkgdesc='Read-only Jetson thermal, clock and unified-memory status'
+arch=('aarch64')
+url='https://github.com/OWNER/omarchy-jetson'
+license=('MIT')
+depends=('bash' 'coreutils' 'gawk' 'jq' 'sed' 'systemd' 'tar' 'util-linux')
+
+source=('omarchy-jetson-status' 'omarchy-jetson-support'
+        "PROJECT-LICENSE::file://${startdir}/../../LICENSE")
+sha256sums=('ab4855c817748815eaa945f76ea8535cab60bb7518cd9d3aa368baea4f8d50f5'
+            'eabe09575da9dec8774ded281fc2aeaa64c4b002160ce74c3036a698bc3f0141'
+            '83cfe731d9126f1c55f3663e7c6e51e37267420bd92cfeafcb8ab96d2a9c12a2')
+
+package() {
+  install -Dm755 omarchy-jetson-status "$pkgdir/usr/bin/omarchy-jetson-status"
+  install -Dm755 omarchy-jetson-support "$pkgdir/usr/bin/omarchy-jetson-support"
+  install -Dm644 PROJECT-LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

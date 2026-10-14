@@ -1,0 +1,47 @@
+# Maintainer: omarchy-jetson contributors
+
+pkgname=linux-jetson-headers
+pkgver=6.8.12.1021
+pkgrel=1
+pkgdesc='Prepared native AArch64 headers for the pinned NVIDIA Jetson kernel'
+arch=('aarch64')
+url='https://developer.nvidia.com/embedded/jetson-linux'
+license=('LicenseRef-NVIDIA-Jetson-Linux')
+depends=('linux-jetson=6.8.12-1021')
+options=('!strip' '!debug')
+
+_kernelrelease='6.8.12-1021-tegra'
+_headers_root='linux-headers-6.8.12-1021-tegra-ubuntu24.04_aarch64/3rdparty/canonical/linux-noble'
+_bsp_root=${JETSON_BSP_DIR:?Set JETSON_BSP_DIR to the extracted Linux_for_Tegra directory}
+
+source=(
+  "kernel_headers.tbz2::file://${_bsp_root}/kernel/kernel_headers.tbz2"
+  "kernel_oot_headers.tbz2::file://${_bsp_root}/kernel/kernel_oot_headers.tbz2"
+  "LICENSE::file://${_bsp_root}/kernel/LICENSE"
+)
+noextract=('kernel_headers.tbz2' 'kernel_oot_headers.tbz2')
+sha256sums=(
+  '76062d2c793e9eb9ab6f7c66d1bed0609b4a2f62cc422180e24a460d2bae13e4'
+  '9c172bade8a2086caa1cdbd4a80dc1c33e1cd9eb9f64cf5a75deae33cb253570'
+  'ee21f6c142a10bf8752563812da87bb98985daa6ad2e88794be31078cc32d604'
+)
+
+package() {
+  local headers_dir="$pkgdir/usr/src/linux-headers-${_kernelrelease}"
+  local oot_dir="$pkgdir/usr/src/nvidia-oot-headers-${_kernelrelease}"
+
+  install -d "$headers_dir" "$oot_dir" "$pkgdir/usr/lib/modules/${_kernelrelease}"
+  bsdtar -xf kernel_headers.tbz2 -C "$headers_dir" --strip-components=4 "${_headers_root}/"
+  bsdtar -xf kernel_oot_headers.tbz2 -C "$oot_dir"
+  ln -s "/usr/src/linux-headers-${_kernelrelease}" \
+    "$pkgdir/usr/lib/modules/${_kernelrelease}/build"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+
+  test -f "$headers_dir/Makefile"
+  test -f "$headers_dir/.config"
+  test -f "$headers_dir/Module.symvers"
+  test -x "$headers_dir/scripts/basic/fixdep"
+  test -x "$headers_dir/scripts/mod/modpost"
+  test -f "$oot_dir/nvgpu/Module.symvers"
+  test -L "$pkgdir/usr/lib/modules/${_kernelrelease}/build"
+}

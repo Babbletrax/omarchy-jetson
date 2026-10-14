@@ -1,0 +1,64 @@
+{
+  // Jetson additions merged over the upstream Omarchy menu. Menu.qml reads this
+  // from ~/.config/omarchy/extensions/omarchy-menu.jsonc and layers it on top of
+  // default/omarchy/omarchy-menu.jsonc, so nothing upstream needs forking.
+  "items": {
+    // Scale, bar text size and per-output resolution live in the Jetson
+    // controllers. Upstream's Style > Font now works too: its "fonts" provider
+    // reads fontconfig through the omarchy-font-* commands, which this build
+    // ships, so the entry stays guarded only against their absence.
+    "style.appearance": {
+      "icon": "",
+      "label": "Scale and fonts",
+      "description": "UI scale, top bar text size, desktop font and theme mode",
+      "when": "command -v omarchy-jetson-appearance",
+      "action": "omarchy-jetson-appearance menu"
+    },
+    "style.display": {
+      "icon": "󰍹",
+      "label": "Display",
+      "description": "Resolution, position and per-output scale",
+      "when": "command -v omarchy-jetson-display",
+      "action": "omarchy-jetson-display menu"
+    },
+    "style.font": {
+      "icon": "",
+      "label": "Font",
+      "when": "command -v omarchy-font-list",
+      "provider": "fonts"
+    },
+    // Upstream only ever runs a random effect. These expose the ttfx effect
+    // list so a specific one can be chosen, and previewed straight away.
+    // Override the upstream trigger so it does not depend on the Quattro bin
+    // directory being on the session PATH, which it is not for a session that
+    // started before that package landed.
+    "system.screensaver": {
+      "icon": "󱄄",
+      "label": "Screensaver",
+      "when": "command -v omarchy-jetson-screensaver",
+      "action": "omarchy-jetson-screensaver start force"
+    },
+    "style.screensaver.effect": {
+      "icon": "󱄄",
+      "label": "Effect",
+      "description": "Choose which screensaver effect runs",
+      "when": "command -v omarchy-jetson-screensaver",
+      "action": "omarchy-jetson-screensaver select"
+    },
+    "style.screensaver.preview": {
+      "icon": "",
+      "label": "Preview Effect",
+      "description": "Choose an effect and run it now",
+      "when": "command -v omarchy-jetson-screensaver",
+      "action": "omarchy-jetson-screensaver preview"
+    },
+    // NVIDIA power modes (nvpmodel) replace power-profiles-daemon on Jetson.
+    "setup.jetson-power": {
+      "icon": "",
+      "label": "Jetson Power Mode",
+      "description": "NVIDIA nvpmodel power mode and clocks",
+      "when": "command -v omarchy-jetson-power",
+      "action": "omarchy-jetson-power menu"
+    }
+  }
+}

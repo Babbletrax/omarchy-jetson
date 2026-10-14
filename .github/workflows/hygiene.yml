@@ -1,0 +1,26 @@
+name: public hygiene
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  hygiene:
+    name: public-hygiene.sh
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Scan for private names, addresses and blobs
+        env:
+          # Maintainer-specific patterns, one ERE per line. Not available to
+          # pull requests from forks; the generic checks still run there.
+          HYGIENE_PRIVATE_PATTERNS: ${{ secrets.HYGIENE_PRIVATE_PATTERNS }}
+        run: ./tests/public-hygiene.sh

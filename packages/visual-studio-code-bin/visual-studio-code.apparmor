@@ -1,0 +1,7 @@
+abi <abi/4.0>,
+
+include <tunables/global>
+
+/opt/visual-studio-code/code flags=(unconfined) {
+  userns,
+}

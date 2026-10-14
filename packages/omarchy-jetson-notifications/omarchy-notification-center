@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+config_home=${XDG_CONFIG_HOME:-$HOME/.config}
+config_dir=$config_home/swaync
+config_file=$config_dir/config.json
+defaults=${OMARCHY_NOTIFICATION_DEFAULTS:-/usr/share/omarchy-jetson/notifications}
+systemctl_command=${OMARCHY_NOTIFICATION_SYSTEMCTL:-systemctl}
+
+ensure_config() {
+  install -d -m 700 "$config_dir"
+  [[ -f $config_file ]] || install -m 600 "$defaults/config.json" "$config_file"
+  [[ -f $config_dir/style.css ]] || install -m 600 "$defaults/style.css" "$config_dir/style.css"
+}
+
+set_timeout() {
+  local seconds=$1 temporary
+  case $seconds in 5|10|30|60|0) ;; *) printf 'ERROR timeout must be 5, 10, 30, 60 or 0 seconds\n' >&2; exit 2 ;; esac
+  ensure_config
+  temporary=$config_file.tmp
+  jq --argjson timeout "$seconds" '.timeout=$timeout | ."timeout-low"=([$timeout,5]|min)' \
+    "$config_file" >"$temporary"
+  jq -e . "$temporary" >/dev/null
+  chmod 600 "$temporary"
+  mv -f "$temporary" "$config_file"
+  swaync-client --reload-config >/dev/null 2>&1 || true
+  logger --tag omarchy-notifications -- "event=timeout-change seconds=$seconds" 2>/dev/null || true
+}
+
+case ${1:-toggle} in
+  start) ensure_config; "$systemctl_command" --user start swaync.service ;;
+  toggle) swaync-client --toggle-panel ;;
+  open) swaync-client --open-panel ;;
+  close) swaync-client --close-panel ;;
+  read-all) swaync-client --close-all ;;
+  mark-unread) swaync-client --hide-all ;;
+  count) swaync-client --count ;;
+  timeout) set_timeout "${2:-}" ;;
+  status) printf 'count=%s\n' "$(swaync-client --count)"; printf 'dnd=%s\n' "$(swaync-client --get-dnd)" ;;
+  *) printf 'Usage: omarchy-notification-center {start|toggle|open|close|read-all|mark-unread|count|status|timeout SECONDS}\n' >&2; exit 2 ;;
+esac

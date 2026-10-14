@@ -1,0 +1,8 @@
+# NVIDIA JetPack 7.2.1 / Jetson Linux R39.2.1 container toolkit.
+# Fetched from NVIDIA's official Jetson apt repository (repo.download.nvidia.com/jetson/common);
+# no NVIDIA binaries are stored in this repository.
+# package|version|repository path|sha256
+libnvidia-container-tools|1.19.1-1|pool/main/libn/libnvidia-container/libnvidia-container-tools_1.19.1-1_arm64.deb|53fc1fff5b2b7427451980d4fd0479c465b7cd2a8b74b2b503979e4e4d83c257
+libnvidia-container1|1.19.1-1|pool/main/libn/libnvidia-container/libnvidia-container1_1.19.1-1_arm64.deb|c161ad707a281fe601add6bd15e0bc2b7cc003dc6e2ff2a3a657671d2f05aa77
+nvidia-container-toolkit|1.19.1-1|pool/main/n/nvidia-container-toolkit/nvidia-container-toolkit_1.19.1-1_arm64.deb|2f52e91b30fc66699713f325dc1260c28d3aa03d0f8667a2976021cdddedf8cf
+nvidia-container-toolkit-base|1.19.1-1|pool/main/n/nvidia-container-toolkit/nvidia-container-toolkit-base_1.19.1-1_arm64.deb|1b3657217454d45825122bd2b1866bcfb46095c64a8a1235960a264e463fdf1b

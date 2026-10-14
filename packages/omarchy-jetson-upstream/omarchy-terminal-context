@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+state=${OMARCHY_TERMINAL_CONTEXT_STATE:-${XDG_CONFIG_HOME:-$HOME/.config}/omarchy-jetson/terminal-contexts.json}
+
+usage() {
+  printf 'Usage: omarchy-terminal-context {create NAME COLOUR|open NAME|delete NAME|list}\n' >&2
+  exit 2
+}
+
+valid_name() {
+  ((${#1} >= 1 && ${#1} <= 48)) &&
+    [[ $1 =~ ^[[:alnum:]][[:alnum:]._-]*(\ [[:alnum:]._-]+)*$ ]]
+}
+
+resolve_colour() {
+  case ${1,,} in
+    blue) printf 'ff2563eb' ;; purple) printf 'ff7c3aed' ;;
+    green) printf 'ff059669' ;; amber) printf 'ffd97706' ;;
+    red) printf 'ffdc2626' ;; slate) printf 'ff475569' ;;
+    *) return 1 ;;
+  esac
+}
+
+ensure_state() {
+  local state_directory
+  state_directory=$(dirname "$state")
+  if [[ ! -d $state_directory ]]; then
+    (umask 077; mkdir -p -- "$state_directory")
+  fi
+  exec 9>"${state}.lock"
+  chmod 600 -- "${state}.lock"
+  flock -x 9
+  if [[ ! -e $state ]]; then
+    printf '{"version":1,"contexts":[]}\n' >"$state"
+    chmod 600 -- "$state"
+  fi
+  [[ ! -L $state ]] || { printf 'Refusing symbolic-link state file\n' >&2; return 1; }
+  jq -e '.version == 1 and (.contexts | type == "array")' "$state" >/dev/null
+}
+
+save_filter() {
+  local temporary
+  temporary=$(mktemp "${state}.tmp.XXXXXX")
+  if jq "$@" "$state" >"$temporary"; then
+    chmod 600 -- "$temporary"
+    mv -f -- "$temporary" "$state"
+  else
+    rm -f -- "$temporary"
+    return 1
+  fi
+}
+
+command=${1:-}
+shift || true
+ensure_state
+
+case $command in
+  create)
+    (($# == 2)) || usage
+    name=$1
+    valid_name "$name" || { printf 'Name must be 1-48 simple printable characters\n' >&2; exit 2; }
+    colour=$(resolve_colour "$2") || { printf 'Colour must be blue, purple, green, amber, red or slate\n' >&2; exit 2; }
+    # jq variables are intentionally protected from shell expansion.
+    # shellcheck disable=SC2016
+    save_filter --arg name "$name" --arg colour "$colour" \
+      '.contexts = ([.contexts[] | select(.name != $name)] + [{name:$name, colour:$colour}] | sort_by(.name))'
+    ;;
+  open)
+    (($# == 1)) || usage
+    name=$1
+    colour=$(jq -er --arg name "$name" '.contexts[] | select(.name == $name) | .colour' "$state") || {
+      printf 'Unknown terminal context: %s\n' "$name" >&2
+      exit 1
+    }
+    flock -u 9
+    exec 9>&-
+    exec omarchy-launch-terminal --title "$name" --header-color "$colour" --app-id "omarchy-terminal-$colour" -- \
+      env "OMARCHY_TERMINAL_CONTEXT_TITLE=$name" \
+      bash --rcfile /usr/share/omarchy-jetson/terminal-context.bashrc -i
+    ;;
+  delete)
+    (($# == 1)) || usage
+    # shellcheck disable=SC2016
+    save_filter --arg name "$1" '.contexts = [.contexts[] | select(.name != $name)]'
+    ;;
+  list)
+    (($# == 0)) || usage
+    jq -r '.contexts[] | [.name, .colour] | @tsv' "$state"
+    ;;
+  *) usage ;;
+esac

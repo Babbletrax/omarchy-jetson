@@ -1,0 +1,50 @@
+{
+  "layer": "top",
+  "position": "top",
+  "height": 32,
+  "spacing": 8,
+  "modules-left": ["hyprland/workspaces", "hyprland/window"],
+  "modules-center": ["clock"],
+  "modules-right": ["pulseaudio", "custom/notifications", "tray"],
+  "hyprland/workspaces": {
+    "disable-scroll": true,
+    "all-outputs": true
+  },
+  "clock": {
+    "format": "{:%a %d %b  %H:%M}",
+    "tooltip-format": "<tt>{calendar}</tt>"
+  },
+  "cpu": {
+    "format": "CPU {usage}%",
+    "interval": 2
+  },
+  "memory": {
+    "format": "RAM {percentage}%",
+    "interval": 2
+  },
+  "network": {
+    "format-ethernet": "{ifname} {ipaddr}",
+    "format-wifi": "{essid} {signalStrength}%",
+    "format-disconnected": "offline",
+    "tooltip-format": "{ifname}: {ipaddr}/{cidr}"
+  },
+  "pulseaudio": {
+    "format": "{icon}",
+    "format-muted": "󰝟",
+    "format-icons": {"default": ["", "", ""]},
+    "tooltip-format": "Volume {volume}%",
+    "on-click": "pavucontrol"
+  },
+  "custom/notifications": {
+    "return-type": "json",
+    "exec-if": "command -v swaync-client",
+    "exec": "swaync-client --subscribe-waybar",
+    "format": "{icon}",
+    "format-icons": {"notification": "", "none": "", "dnd-notification": "", "dnd-none": ""},
+    "tooltip": false,
+    "on-click": "omarchy-notification-center toggle"
+  },
+  "tray": {
+    "spacing": 8
+  }
+}

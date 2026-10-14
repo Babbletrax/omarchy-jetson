@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+
+# omarchy:summary=Choose and run the Omarchy screensaver effect.
+
+set -euo pipefail
+
+readonly state_dir="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy-jetson"
+readonly state_file="$state_dir/screensaver-effect"
+
+menu_font() {
+  local scale state="$state_dir/appearance.json"
+  [[ -f $state ]] && scale=$(jq -r '.ui_scale // "1"' "$state" 2>/dev/null) || scale=1
+  case "$scale" in
+    1) printf '%s' "${OMARCHY_MENU_FONT:-monospace:size=16}" ;; 1.25) printf 'monospace:size=20' ;;
+    1.5) printf 'monospace:size=24' ;; 1.75) printf 'monospace:size=28' ;; 2) printf 'monospace:size=32' ;;
+    *) printf 'monospace:size=16' ;;
+  esac
+}
+
+fuzzel_config_args() {
+  local config="$state_dir/fuzzel.ini"
+  [[ -r $config ]] && printf '%s\n' --config "$config"
+}
+
+log() { logger --tag omarchy-screensaver -- "level=$1 ${*:2}" 2>/dev/null || true; }
+die() { log error "$*"; printf 'omarchy-jetson-screensaver: %s\n' "$*" >&2; exit 2; }
+
+choose() {
+  local prompt=$1 config_args=()
+  mapfile -t config_args < <(fuzzel_config_args)
+  fuzzel "${config_args[@]}" --dmenu --only-match --minimal-lines --lines=12 --width=58 \
+    --font="$(menu_font)" --prompt="$prompt > " --with-nth=2 --accept-nth=1
+}
+
+# The effect list comes from ttfx itself rather than a hard-coded copy, so a
+# ttfx upgrade that adds or drops an effect cannot leave the menu offering one
+# that no longer runs.
+effects() {
+  ttfx --help 2>/dev/null |
+    sed -n '/^Commands:/,/^Options:/p' |
+    awk 'NF && $1 !~ /^(Commands:|Options:|help)$/ {print $1}'
+}
+
+valid_effect() { [[ $1 == random ]] || effects | grep -qx -- "$1"; }
+
+current() {
+  local effect=random
+  [[ -r $state_file ]] && read -r effect <"$state_file"
+  [[ -n $effect ]] && valid_effect "$effect" || effect=random
+  printf '%s\n' "$effect"
+}
+
+set_effect() {
+  local effect=$1
+  valid_effect "$effect" || die "unknown-effect=$effect"
+  mkdir -p "$state_dir"
+  printf '%s\n' "$effect" >"$state_file"
+  log info "event=effect-set effect=$effect"
+  printf '%s\n' "$effect"
+}
+
+# Consumed by omarchy-screensaver in place of its hard-coded --random-effect,
+# so the selection applies to the stock launcher and every monitor it covers.
+effect_args() {
+  local effect
+  effect=$(current)
+  [[ $effect == random ]] && printf '%s\n' --random-effect || printf '%s\n' "$effect"
+}
+
+select_effect() {
+  local effect selection
+  effect=$(current)
+  selection=$(
+    {
+      if [[ $effect == random ]]; then
+        printf 'random\tRandom effect  (current)\n'
+      else
+        printf 'random\tRandom effect\n'
+      fi
+      effects | while read -r name; do
+        if [[ $name == "$effect" ]]; then
+          printf '%s\t%s  (current)\n' "$name" "$name"
+        else
+          printf '%s\t%s\n' "$name" "$name"
+        fi
+      done
+    } | choose 'Screensaver effect'
+  ) || return 0
+  [[ -n $selection ]] || return 0
+  set_effect "$selection" >/dev/null
+}
+
+# The upstream launcher and the commands it shells out to live in the Quattro
+# tree, which a session started before that package landed will not have on
+# PATH. Resolve it directly and put its directory in front, so the menu entry
+# works without waiting for a re-login.
+launcher_dir() { printf '%s/bin\n' "${OMARCHY_PATH:-/usr/share/omarchy}"; }
+
+start() {
+  local dir command_path
+  dir=$(launcher_dir)
+  if command_path=$(command -v omarchy-launch-screensaver 2>/dev/null); then
+    :
+  elif [[ -x $dir/omarchy-launch-screensaver ]]; then
+    command_path="$dir/omarchy-launch-screensaver"
+  else
+    die 'launcher-missing command=omarchy-launch-screensaver'
+  fi
+  case ":$PATH:" in *":$dir:"*) ;; *) PATH="$dir:$PATH" ;; esac
+  export PATH
+  # The launcher builds the terminal's config path from OMARCHY_PATH. Unset, it
+  # passes foot a --config of /default/foot/screensaver.ini, which does not
+  # exist, and the terminal dies before the screensaver is ever drawn.
+  export OMARCHY_PATH="${OMARCHY_PATH:-/usr/share/omarchy}"
+  exec "$command_path" "$@"
+}
+
+stop() {
+  pkill -x ttfx 2>/dev/null || true
+  pkill -f '[o]rg.omarchy.screensaver' 2>/dev/null || true
+}
+
+# Picking an effect is most useful when you can see it straight away.
+select_and_start() {
+  select_effect
+  start "$@"
+}
+
+case "${1:-select}" in
+  list) effects ;;
+  show) current ;;
+  effect-args) effect_args ;;
+  set) [[ $# -eq 2 ]] || die "usage: set <effect|random>"; set_effect "$2" ;;
+  select) select_effect ;;
+  preview) shift; select_and_start "$@" ;;
+  start) shift; start "$@" ;;
+  stop) stop ;;
+  *) die "unknown-command=$1" ;;
+esac

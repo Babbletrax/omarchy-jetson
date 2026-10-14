@@ -1,0 +1,46 @@
+# Maintainer: omarchy-jetson contributors
+
+pkgname=nvidia-jetson-power
+pkgver=39.2.1
+pkgrel=2
+pkgdesc='NVIDIA nvpmodel query and user-selected power profiles for Jetson AGX Orin 64GB'
+arch=('aarch64')
+url='https://developer.nvidia.com/embedded/jetson-linux'
+license=('LicenseRef-NVIDIA-Jetson-Linux')
+depends=('glibc' 'nvidia-jetson-userspace')
+provides=('nvpmodel')
+options=('!strip' '!debug')
+
+_bsp_root=${JETSON_BSP_DIR:?Set JETSON_BSP_DIR to the extracted Linux_for_Tegra directory}
+
+source=(
+  "nvidia-l4t-nvpmodel.deb::file://${_bsp_root}/nv_tegra/l4t_deb_packages/nvidia-l4t-nvpmodel_39.2.1-20260806224157_arm64.deb"
+)
+noextract=('nvidia-l4t-nvpmodel.deb')
+sha256sums=('e434d97e0423476913808c58a769a419a7f39cf63dd4e7b4c6ddd97c8283f761')
+
+package() {
+  bsdtar -xOf nvidia-l4t-nvpmodel.deb data.tar.zst | \
+    bsdtar --no-same-owner -xf - -C "$pkgdir" \
+      ./usr/sbin/nvpmodel \
+      ./etc/nvpmodel/nvpmodel_p3701_0000.conf \
+      ./usr/share/doc/nvidia-l4t-nvpmodel/copyright
+
+  install -d "$pkgdir/etc"
+  ln -s nvpmodel/nvpmodel_p3701_0000.conf "$pkgdir/etc/nvpmodel.conf"
+  # nvpmodel writes its selected config path and mode status here even for its
+  # first query. Package the empty state directory without selecting a mode.
+  install -d "$pkgdir/var/lib/nvpmodel"
+
+  install -d "$pkgdir/usr/share/licenses/$pkgname"
+  mv "$pkgdir/usr/share/doc/nvidia-l4t-nvpmodel/copyright" \
+    "$pkgdir/usr/share/licenses/$pkgname/copyright"
+  rmdir "$pkgdir/usr/share/doc/nvidia-l4t-nvpmodel" "$pkgdir/usr/share/doc"
+
+  test "$(sha256sum "$pkgdir/usr/sbin/nvpmodel" | cut -d' ' -f1)" = \
+    '4f395d8b2615e642797d9bfeeed500471d6c8fb603330a02aeb7ddd2cd4529c0'
+  test "$(sha256sum "$pkgdir/etc/nvpmodel/nvpmodel_p3701_0000.conf" | cut -d' ' -f1)" = \
+    '410d9f1a2f0a9a9db9445479828dc217370e56c138bf3574d3f4c8f045b7e716'
+  test -L "$pkgdir/etc/nvpmodel.conf"
+  test ! -e "$pkgdir/usr/lib/systemd/system/nvpmodel.service"
+}

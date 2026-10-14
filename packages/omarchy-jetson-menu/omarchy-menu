@@ -1,0 +1,231 @@
+#!/usr/bin/env bash
+
+# Lightweight, capability-aware menu adapter for Omarchy Jetson.
+# Keeps the upstream command surface while avoiding an Omarchy Shell dependency.
+
+set -euo pipefail
+
+menu_font() {
+  local scale state="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy-jetson/appearance.json"
+  [[ -f $state ]] && scale=$(jq -r '.ui_scale // "1"' "$state" 2>/dev/null) || scale=1
+  case "$scale" in
+    1) printf '%s' "${OMARCHY_MENU_FONT:-monospace:size=16}" ;; 1.25) printf 'monospace:size=20' ;;
+    1.5) printf 'monospace:size=24' ;; 1.75) printf 'monospace:size=28' ;; 2) printf 'monospace:size=32' ;;
+    *) printf 'monospace:size=16' ;;
+  esac
+}
+
+fuzzel_config_args() {
+  local config="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy-jetson/fuzzel.ini"
+  [[ -r $config ]] && printf '%s\n' --config "$config"
+}
+
+has() { command -v "$1" >/dev/null 2>&1; }
+log() { logger --tag omarchy-menu -- "level=$1 ${*:2}" 2>/dev/null || true; }
+on_error() {
+  local status=$? line=${BASH_LINENO[0]:-unknown}
+  log error "status=$status line=$line verb=${verb:-unknown} route=${route:-unknown}"
+  exit "$status"
+}
+trap on_error ERR
+
+rows() {
+  case "${1:-root}" in
+    root)
+      printf '%s\n' \
+        $'apps\tApplications' \
+        $'capture\tCapture' \
+        $'display\tDisplay settings' \
+        $'appearance\tAppearance' \
+        $'workspaces\tWorkspaces' \
+        $'hardware\tJetson hardware' \
+        $'keybindings\tKeybindings' \
+        $'system\tSystem'
+      ;;
+    capture)
+      if has omarchy-capture-screenshot; then
+        printf '%s\n' \
+          $'capture-smart\tScreenshot: smart selection' \
+          $'capture-region\tScreenshot: region' \
+          $'capture-window\tScreenshot: window' \
+          $'capture-full\tScreenshot: full screen'
+      else
+        printf '%s\n' $'unavailable\tScreenshots — unavailable (capture tools not installed)'
+      fi
+      if has hyprpicker; then
+        printf '%s\n' $'colour\tColour picker'
+      fi
+      if has omarchy-capture-text && has tesseract; then
+        printf '%s\n' $'capture-text\tExtract text (OCR)'
+      fi
+      if has omarchy-capture-screenrecording && has wf-recorder; then
+        printf '%s\n' $'screenrecord\tScreen recording…'
+      fi
+      ;;
+    trigger.capture.screenrecord)
+      printf '%s\n' \
+        $'screenrecord-region\tRecord selected region' \
+        $'screenrecord-full\tRecord full screen' \
+        $'screenrecord-desktop-audio\tRecord full screen with desktop audio' \
+        $'screenrecord-microphone\tRecord full screen with microphone'
+      ;;
+    workspaces)
+      local workspace
+      printf '%s\n' $'move-workspaces\tMove active window to workspace…' \
+        $'workspace-close\tClose current empty workspace'
+      for workspace in {1..10}; do
+        printf 'workspace:%s\tWorkspace %s\n' "$workspace" "$workspace"
+      done
+      ;;
+    move-workspaces)
+      local workspace
+      for workspace in {1..10}; do
+        printf 'move-workspace:%s\tMove active window to workspace %s\n' "$workspace" "$workspace"
+      done
+      ;;
+    hardware)
+      printf '%s\n' $'hardware-status\tTemperatures and power status'
+      if has omarchy-jetson-power; then
+        printf '%s\n' $'hardware-power\tNVIDIA power mode'
+      fi
+      if has btop; then
+        printf '%s\n' $'activity\tActivity monitor'
+      fi
+      ;;
+    system)
+      if has omarchy-system-lock; then
+        printf '%s\n' $'lock\tLock'
+      else
+        printf '%s\n' $'unavailable\tLock — unavailable (locker not installed)'
+      fi
+      printf '%s\n' \
+        $'logout\tLog out' \
+        $'reboot\tRestart' \
+        $'shutdown\tShut down'
+      ;;
+    *) return 2 ;;
+  esac
+}
+
+choose() {
+  local prompt=$1 config_args=()
+  mapfile -t config_args < <(fuzzel_config_args)
+  fuzzel --dmenu --only-match --minimal-lines --lines=12 --width=52 \
+    "${config_args[@]}" --font="$(menu_font)" --prompt="$prompt > " --with-nth=2 --accept-nth=1
+}
+
+confirm() {
+  local action=$1 selected
+  selected=$(printf 'cancel\tCancel\nconfirm\tConfirm %s\n' "$action" |
+    choose "Confirm") || return 1
+  [[ $selected == confirm ]]
+}
+
+show_hardware() {
+  local shell_command
+  if has omarchy-jetson-status; then
+    shell_command='omarchy-jetson-status; printf "\nPower profile\n"; sudo -n /usr/sbin/nvpmodel -q 2>&1 || true; printf "\nPress Enter to close"; read -r'
+  else
+    shell_command='printf "Hardware status unavailable: install omarchy-jetson-observability\n\nPress Enter to close"; read -r'
+  fi
+  exec foot --title='Jetson hardware' bash -lc "$shell_command"
+}
+
+close_empty_workspace() {
+  local workspace window_count
+  workspace=$(hyprctl activeworkspace -j | jq -er '.id | select(. > 0)')
+  window_count=$(hyprctl clients -j | jq --argjson workspace "$workspace" \
+    '[.[] | select(.workspace.id == $workspace)] | length')
+  if ((window_count > 0)); then
+    log warning "event=workspace-close-refused workspace=$workspace windows=$window_count"
+    command -v notify-send >/dev/null 2>&1 &&
+      notify-send 'Workspace not empty' 'Move or close its windows first.' || true
+    return 0
+  fi
+  hyprctl dispatch workspace previous >/dev/null
+  log info "event=workspace-close workspace=$workspace"
+}
+
+run_selection() {
+  local selected=$1
+  case "$selected" in
+    apps) open_route apps ;;
+    capture|workspaces|hardware|system|screenrecord) open_route "$selected" ;;
+    move-workspaces) open_route move-workspaces ;;
+    display) exec omarchy-jetson-display menu ;;
+    appearance) exec omarchy-jetson-appearance menu ;;
+    keybindings) exec omarchy-menu-keybindings ;;
+    capture-smart) exec omarchy-capture-screenshot smart slurp ;;
+    capture-region) exec omarchy-capture-screenshot region slurp ;;
+    capture-window) exec omarchy-capture-screenshot windows slurp ;;
+    capture-full) exec omarchy-capture-screenshot fullscreen slurp ;;
+    colour) exec hyprpicker -a ;;
+    capture-text) exec omarchy-capture-text ;;
+    screenrecord-region) exec omarchy-capture-screenrecording ;;
+    screenrecord-full) exec omarchy-capture-screenrecording --fullscreen ;;
+    screenrecord-desktop-audio) exec omarchy-capture-screenrecording --fullscreen --with-desktop-audio ;;
+    screenrecord-microphone) exec omarchy-capture-screenrecording --fullscreen --with-microphone-audio ;;
+    workspace:*) exec hyprctl dispatch workspace "${selected#workspace:}" ;;
+    move-workspace:*) exec hyprctl dispatch movetoworkspace "${selected#move-workspace:}" ;;
+    workspace-close) close_empty_workspace ;;
+    hardware-status) show_hardware ;;
+    hardware-power) exec omarchy-jetson-power menu ;;
+    activity) exec foot --title=Activity btop ;;
+    lock) exec omarchy-system-lock ;;
+    unavailable) log warning "event=unavailable route=${route:-unknown}" ;;
+    '') return 0 ;;
+    logout) confirm 'log out' && exec uwsm stop ;;
+    reboot) confirm restart && exec systemctl reboot ;;
+    shutdown) confirm shutdown && exec systemctl poweroff ;;
+    *) printf 'omarchy-menu: unsupported selection: %s\n' "$selected" >&2; return 2 ;;
+  esac
+}
+
+open_route() {
+  local route=${1:-root} selected status
+  [[ $route == screenrecord ]] && route=trigger.capture.screenrecord
+  log info "event=open route=$route"
+  if [[ $route == apps ]]; then
+    # The dmenu surface that routed here is gone, but its Wayland layer may
+    # remain briefly. Avoid racing Fuzzel's next application-mode surface.
+    sleep 0.15
+    local config_args=()
+    mapfile -t config_args < <(fuzzel_config_args)
+    exec fuzzel "${config_args[@]}" --font="$(menu_font)"
+  fi
+  case "$route" in
+    root|capture|trigger.capture.screenrecord|workspaces|move-workspaces|hardware|system) ;;
+    *) log error "component=router status=2 route=$route"; return 2 ;;
+  esac
+  set +e
+  selected=$(rows "$route" | choose "Omarchy ${route}")
+  status=$?
+  set -e
+  if ((status == 1)); then
+    log info "event=cancel route=$route"
+    return 0
+  elif ((status != 0)); then
+    log error "component=chooser status=$status route=$route"
+    return "$status"
+  fi
+  log info "event=select route=$route action=$selected"
+  run_selection "$selected"
+}
+
+verb=${1:-toggle}
+route=${2:-root}
+
+case "$verb" in
+  toggle|summon) open_route "$route" ;;
+  list) rows "$route" ;;
+  action) run_selection "$route" ;;
+  close) pkill -x fuzzel 2>/dev/null || true ;;
+  ping) printf 'ok\n' ;;
+  refresh) : ;;
+  -h|--help|help)
+    printf '%s\n' \
+      'Usage: omarchy-menu [toggle|summon|list|action|close|refresh|ping] [route or action]' \
+      'Routes: root, apps, capture, trigger.capture.screenrecord, workspaces, move-workspaces, hardware, system'
+    ;;
+  *) printf "omarchy-menu: unknown verb '%s'\n" "$verb" >&2; exit 2 ;;
+esac

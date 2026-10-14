@@ -1,0 +1,36 @@
+# Maintainer: omarchy-jetson contributors
+
+pkgname=wlrctl
+pkgver=0.2.2
+pkgrel=1
+pkgdesc='Wayland virtual pointer and keyboard client, for driving this build without USB HID'
+arch=('aarch64')
+url='https://git.sr.ht/~brocellous/wlrctl'
+license=('MIT')
+depends=('wayland')
+makedepends=('meson' 'ninja' 'wayland-protocols' 'pkgconf')
+
+# The Comet KVM delivers keyboard and mouse over USB, and that link has proven
+# unstable on this board; the Tegra kernel also ships no uinput module, so
+# ydotool cannot work here at all. wlrctl talks the wlr-virtual-pointer and
+# virtual-keyboard protocols straight to the compositor, so input no longer
+# depends on a physical cable.
+source=("wlrctl-v${pkgver}.tar.gz::https://git.sr.ht/~brocellous/wlrctl/archive/v${pkgver}.tar.gz")
+sha256sums=('b5b3836091c41de09a832df1e5eb4747841d7ae670367e413487d5be7a5f2849')
+
+build() {
+  # Man pages need scdoc, which this build does not ship. werror is disabled
+  # because upstream targets an older GCC: 16.1 raises type-limits on a
+  # keycode range check in keyboard.c that is harmless here.
+  arch-meson "wlrctl-v$pkgver" build -Dman-pages=disabled -Dwerror=false
+  meson compile -C build
+}
+
+check() {
+  [[ $(file -b build/wlrctl) == *'ARM aarch64'* ]]
+}
+
+package() {
+  meson install -C build --destdir "$pkgdir"
+  install -Dm644 "wlrctl-v$pkgver/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

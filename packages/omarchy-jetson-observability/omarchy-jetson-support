@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+redact() {
+  sed -E \
+    -e 's#op://[^[:space:]]+#op://[REDACTED]#gI' \
+    -e 's#(Bearer|Basic)[[:space:]]+[A-Za-z0-9._~+/=-]+#\1 [REDACTED]#gI' \
+    -e 's#((api[-_]?key|token|password|passwd|secret|authorization)[[:space:]]*[=:][[:space:]]*)[^[:space:]]+#\1[REDACTED]#gI' \
+    -e 's#([A-Za-z0-9_]*(TOKEN|PASSWORD|PASSWD|SECRET|API_KEY)[A-Za-z0-9_]*=)[^[:space:]]+#\1[REDACTED]#g' \
+    -e 's#([0-9]{1,3}\.){3}[0-9]{1,3}#[IP]#g'
+}
+
+if [[ ${1:-} == --redact ]]; then
+  redact
+  exit
+fi
+
+output=${1:-${XDG_DOWNLOAD_DIR:-$HOME/Downloads}/omarchy-jetson-support-$(date -u +%Y%m%dT%H%M%SZ).tar.gz}
+case $output in
+  /*) ;;
+  *) output=$PWD/$output ;;
+esac
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+bundle=$work/omarchy-jetson-support
+mkdir -p "$bundle"
+
+capture() {
+  local destination=$1
+  shift
+  { "$@" 2>&1 || true; } | redact >"$bundle/$destination"
+}
+
+capture system.txt sh -c '
+  printf "timestamp_utc="; date -u +%FT%TZ
+  printf "kernel="; uname -srvmo
+  printf "architecture="; uname -m
+  printf "root="; findmnt -no SOURCE,FSTYPE,OPTIONS /
+  printf "os="; sed -n "s/^PRETTY_NAME=//p" /etc/os-release
+  printf "packages_begin\n"
+  pacman -Q linux-jetson nvidia-jetson-userspace nvidia-jetson-cuda omarchy-jetson-menu omarchy-jetson-observability omarchy-jetson-voice 2>&1
+  printf "packages_end\n"
+'
+capture hardware.txt omarchy-jetson-status
+capture failed-system-units.txt systemctl --failed --no-pager --plain
+capture failed-user-units.txt systemctl --user --failed --no-pager --plain
+capture system-journal.txt journalctl --since=-2h -n 500 --no-pager --output=short-iso \
+  -u nvidia-jetson-cdi.service
+capture user-journal.txt journalctl --user --since=-2h -n 500 --no-pager --output=short-iso \
+  -u voxtype.service -u omarchy-jetson-idle.service
+
+printf '%s\n' \
+  'This bundle contains bounded architecture, BSP/package, hardware, failed-unit and allowlisted journal diagnostics.' \
+  'Values matching credentials, 1Password references, authorization headers and IP addresses are redacted.' \
+  'Review every file before sharing.' >"$bundle/README.txt"
+
+mkdir -p "$(dirname "$output")"
+tar -C "$work" -czf "$output" omarchy-jetson-support
+printf 'support_bundle=%s\n' "$output"
+printf 'sha256='; sha256sum "$output" | cut -d' ' -f1

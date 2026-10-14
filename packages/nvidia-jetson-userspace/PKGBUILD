@@ -1,0 +1,128 @@
+# Maintainer: omarchy-jetson contributors
+
+pkgname=nvidia-jetson-userspace
+pkgver=39.2.1
+pkgrel=7
+pkgdesc='Pinned NVIDIA Jetson AGX Orin NVGPU userspace and firmware'
+arch=('aarch64')
+url='https://developer.nvidia.com/embedded/jetson-linux'
+license=('LicenseRef-NVIDIA-Jetson-Linux')
+depends=(
+  'alsa-lib' 'cairo' 'expat' 'gcc-libs' 'glib2' 'glibc' 'gst-plugins-base-libs'
+  'gstreamer' 'gtk3' 'libdrm' 'libglvnd' 'libv4l' 'libx11' 'libxcb' 'libxext'
+  'openssl' 'wayland'
+)
+options=('!strip' '!debug')
+
+# Build stamp of NVIDIA's r39.2 package repository release (jetson/som, dists/r39.2).
+_l4t_build='20260806224157'
+_bsp_root=${JETSON_BSP_DIR:?Set JETSON_BSP_DIR to the extracted Linux_for_Tegra directory}
+
+source=(
+  "nvidia_drivers.tbz2::file://${_bsp_root}/nv_tegra/nvidia_drivers.tbz2"
+  "nvidia_l4t_cuda_nvgpu.tbz2::file://${_bsp_root}/nv_tegra/nvidia_l4t_cuda_nvgpu.tbz2"
+  "nvidia_l4t_nv_tools.tbz2::file://${_bsp_root}/nv_tegra/nv_tools.tbz2"
+  "nvidia_l4t_config.tbz2::file://${_bsp_root}/nv_tegra/config.tbz2"
+  "nvidia_l4t_kernel_display.tbz2::file://${_bsp_root}/kernel/kernel_display_supplements.tbz2"
+  "nvidia_l4t_kernel_nvgpu.tbz2::file://${_bsp_root}/kernel/nvidia_l4t_kernel_nvgpu.tbz2"
+  "nvidia-l4t-init.deb::https://repo.download.nvidia.com/jetson/som/pool/main/n/nvidia-l4t-init/nvidia-l4t-init_${pkgver}-${_l4t_build}_arm64.deb"
+  'nv-l4t-bootloader-config.service'
+)
+noextract=(
+  'nvidia_drivers.tbz2'
+  'nvidia_l4t_cuda_nvgpu.tbz2'
+  'nvidia_l4t_nv_tools.tbz2'
+  'nvidia_l4t_config.tbz2'
+  'nvidia_l4t_kernel_display.tbz2'
+  'nvidia_l4t_kernel_nvgpu.tbz2'
+  'nvidia-l4t-init.deb'
+)
+sha256sums=(
+  'e3ba475de0581e5ae449e0a11bb327ff5dc9cd9acf8640ac225718eac18f80ba'
+  '0ab01fe29374e3fab1e8464eeafa1ab71848af9fc99d4fc338a2550c62457022'
+  '4cb0adceafa6dd80061f4651be0c472358125ae4254827389b4398de0f4ff5d7'
+  '12390f7027d61edd7919fcdd1c790734bcb6ba6fbfd3bb33b9fbeee842f899b3'
+  '0328e05982983d1835af907985b365645a31c42c885c84129c7bcd69a705143a'
+  'd90121fc34c89c09a80922f2172cfad5c2b3a84ece2967180faed20582e39faf'
+  '26cfc6b244ba3d3bbf424732a1ffe0d9e21faa0298eaacc911b7466b5bd76b93'
+  '9c00c11675699d75de18e2310e039b8751695047909ab24c5ba0c6bee4c09b6e'
+)
+
+package() {
+  bsdtar --no-same-owner -xf nvidia_drivers.tbz2 -C "$pkgdir" \
+    --exclude 'etc/nv-update-initrd' \
+    --exclude 'etc/vulkansc' \
+    --exclude 'usr/include/VulkanSC' \
+    --exclude 'usr/lib/nvsipl_drv' \
+    --exclude 'usr/lib/xorg' \
+    --exclude 'usr/share/nv-update-initrd' \
+    --exclude 'usr/src' \
+    --exclude 'var/nvidia/nvcam'
+  bsdtar --no-same-owner -xf nvidia_l4t_cuda_nvgpu.tbz2 -C "$pkgdir"
+  bsdtar --no-same-owner -xf nvidia_l4t_nv_tools.tbz2 -C "$pkgdir" usr/sbin/nvbootctrl
+  bsdtar --no-same-owner -xf nvidia_l4t_kernel_display.tbz2 -C "$pkgdir"
+
+  local kernel_nvgpu_dir="$srcdir/kernel-nvgpu"
+  mkdir -p "$kernel_nvgpu_dir"
+  bsdtar --no-same-owner -xf nvidia_l4t_kernel_nvgpu.tbz2 -C "$kernel_nvgpu_dir"
+  cp -a --no-preserve=ownership "$kernel_nvgpu_dir/lib/modules/." "$pkgdir/usr/lib/modules/"
+  cp -a --no-preserve=ownership "$kernel_nvgpu_dir/usr/share/." "$pkgdir/usr/share/"
+
+  bsdtar --no-same-owner -xf nvidia_l4t_config.tbz2 -C "$pkgdir" \
+    etc/modprobe.d/denylist-oot-modules.conf \
+    etc/systemd/nv-load-display-modules-choose-variant.sh \
+    etc/systemd/nv-load-display-modules.sh \
+    etc/systemd/system/nv-load-display-modules.service \
+    etc/systemd/system/multi-user.target.wants/nv-load-display-modules.service \
+    etc/udev/rules.d/99-tegra-devices.rules \
+    opt/nvidia/nv-disp-module-configs
+
+  bsdtar -xOf nvidia-l4t-init.deb data.tar.zst | \
+    bsdtar --no-same-owner -xf - -C "$pkgdir" \
+      ./etc/nvidia-container-runtime/host-files-for-container.d/devices.csv \
+      ./etc/nvidia-container-runtime/host-files-for-container.d/drivers.csv
+
+  install -Dm644 nv-l4t-bootloader-config.service \
+    "$pkgdir/usr/lib/systemd/system/nv-l4t-bootloader-config.service"
+  install -d "$pkgdir/usr/lib/systemd/system/multi-user.target.wants"
+  ln -s ../nv-l4t-bootloader-config.service \
+    "$pkgdir/usr/lib/systemd/system/multi-user.target.wants/nv-l4t-bootloader-config.service"
+
+  mkdir -p "$pkgdir/usr/lib"
+  mv "$pkgdir/lib/firmware" "$pkgdir/usr/lib/firmware"
+  rmdir "$pkgdir/lib"
+
+  printf '%s\n' '/opt/nvidia/l4t-gpu-libs/nvgpu' \
+    > "$pkgdir/etc/ld.so.conf.d/000-nvidia-gpu-libs.conf"
+  ln -s /opt/nvidia/l4t-gpu-libs/nvgpu/libcuda.so \
+    "$pkgdir/usr/lib/libcuda.so"
+  ln -s /opt/nvidia/l4t-gpu-libs/nvgpu/libcuda.so.1 \
+    "$pkgdir/usr/lib/libcuda.so.1"
+
+  # Arch's libgbm searches /usr/lib/gbm, while the Jetson BSP retains
+  # Debian's multiarch layout. Expose both NVIDIA backend names to libgbm.
+  install -d "$pkgdir/usr/lib/gbm"
+  ln -s ../aarch64-linux-gnu/gbm/nvidia-drm_gbm.so \
+    "$pkgdir/usr/lib/gbm/nvidia-drm_gbm.so"
+  ln -s ../aarch64-linux-gnu/gbm/tegra_gbm.so \
+    "$pkgdir/usr/lib/gbm/tegra_gbm.so"
+
+  install -d "$pkgdir/etc/modprobe.d"
+  printf '%s\n' 'blacklist nouveau' > "$pkgdir/etc/modprobe.d/nvidia-jetson.conf"
+  printf '%s\n' 'options nvgpu devfreq_timer=delayed' >> "$pkgdir/etc/modprobe.d/nvidia-jetson.conf"
+
+  test -f "$pkgdir/opt/nvidia/l4t-gpu-libs/nvgpu/libcuda.so.1.1"
+  test -f "$pkgdir/usr/lib/aarch64-linux-gnu/nvidia/libnvrm_gpu.so"
+  test -L "$pkgdir/usr/lib/gbm/nvidia-drm_gbm.so"
+  test -L "$pkgdir/usr/lib/gbm/tegra_gbm.so"
+  test -L "$pkgdir/usr/lib/firmware/nvidia/tegra234/nvdla.bin"
+  test -f "$pkgdir/usr/lib/firmware/nvhost_nvdla020.fw"
+  test -x "$pkgdir/usr/sbin/nvbootctrl"
+  test -f "$pkgdir/usr/lib/modules/6.8.12-1021-tegra/updates/nvgpu.ko"
+  test -f "$pkgdir/usr/lib/modules/6.8.12-1021-tegra/updates/opensrc-disp/nvidia-drm.ko"
+  test -x "$pkgdir/etc/systemd/nv-load-display-modules.sh"
+  test -L "$pkgdir/etc/systemd/system/multi-user.target.wants/nv-load-display-modules.service"
+  test -f "$pkgdir/etc/udev/rules.d/99-tegra-devices.rules"
+  test -f "$pkgdir/etc/nvidia-container-runtime/host-files-for-container.d/devices.csv"
+  test -f "$pkgdir/etc/nvidia-container-runtime/host-files-for-container.d/drivers.csv"
+}

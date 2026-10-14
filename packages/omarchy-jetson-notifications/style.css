@@ -1,0 +1,15 @@
+@define-color background rgba(17, 19, 26, 0.97);
+@define-color foreground #c0caf5;
+@define-color accent #7aa2f7;
+@define-color muted #565f89;
+
+.control-center, .notification-row .notification-background {
+  background: @background;
+  color: @foreground;
+  border: 1px solid @muted;
+  border-radius: 10px;
+}
+.notification-row { margin: 5px; }
+.notification-row .notification-background { padding: 10px; }
+.close-button { background: @muted; color: @foreground; border-radius: 99px; }
+.close-button:hover, .control-center .notification-row:hover { border-color: @accent; }

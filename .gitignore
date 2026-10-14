@@ -1,0 +1,35 @@
+# Build outputs
+artifacts/
+build/
+reports/
+packages/*/src/
+packages/*/pkg/
+packages/*/*.pkg.tar
+packages/*/*.pkg.tar.*
+*.pkg.tar
+*.pkg.tar.*
+*.src.tar.gz
+
+# Downloaded or generated payloads (never commit vendor binaries)
+*.deb
+*.rpm
+*.tar
+*.tar.gz
+*.tar.xz
+*.tar.zst
+*.tbz2
+*.zip
+*.img
+*.iso
+*.dtb
+packages/*/Image
+packages/*/initrd
+packages/*/LICENSE
+packages/*/PROJECT-LICENSE
+
+# Logs and local state
+*.log
+logs/
+.cache/
+__pycache__/
+*.pyc

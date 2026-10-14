@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Qt 6.12 shadows the shell's `Color` singleton with QtQuick's own Color type,
+# so every palette lookup is undefined and the bar renders blank. Upstream
+# fixed this after v4.0.4 (omacom/omarchy 51717f1, "Patch all QtQuick imports
+# to 6.11 to work around plugin Color bug"): a load-patch pragma at the top of
+# shell.qml. Add it only when missing; once an upstream release ships it this
+# is a no-op and the hook can be retired.
+set -euo pipefail
+shell_qml=/usr/share/omarchy/shell/shell.qml
+pragma='//@ pragma OmarchyLoadPatch'
+[[ -f $shell_qml ]] || exit 0
+grep -qxF "$pragma" "$shell_qml" && exit 0
+sed -i "1i $pragma" "$shell_qml"
+echo "omarchy-jetson: added Qt 6.12 load-patch pragma to $shell_qml"

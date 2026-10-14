@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly shell_root=${OMARCHY_PATH:-/usr/share/omarchy}
+readonly jetson_data=/usr/share/omarchy-jetson
+readonly jetson_bin=/usr/lib/omarchy-jetson/bin
+readonly shell_config=${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/shell.json
+readonly menu_extension=${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/extensions/omarchy-menu.jsonc
+readonly log_tag=omarchy-jetson-shell
+# Menu guards run `command -v`, so anything the menu offers must be findable
+# from the shell. User-installed tools live in ~/.local/bin and mise shims;
+# a systemd user service inherits neither, which would hide those entries
+# even when installed.
+# Jetson overrides first, so hardware-specific commands win over upstream copies.
+export PATH="$jetson_bin:$shell_root/bin:$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"
+shell_pid=''
+healthy=0
+terminating=0
+
+log() { logger --tag "$log_tag" -- "$*" 2>/dev/null || true; printf '%s\n' "$*" >&2; }
+
+# Seeding only when a file is absent leaves it stale after every package
+# upgrade, so record what was seeded: refresh the copy while it still matches
+# what we last wrote, and never touch one the user has since edited.
+seed_file() {
+  local packaged=$1 target=$2 label=$3
+  local seeded=${target}.seeded-sha256
+  [[ -r $packaged ]] || return 0
+  install -d -m 700 "${target%/*}"
+  if [[ ! -e $target ]]; then
+    install -m 600 "$packaged" "$target"
+    sha256sum <"$packaged" >"$seeded"
+    log "event=${label}-created path=$target"
+  elif [[ -r $seeded ]] && [[ $(sha256sum <"$target" | cut -d' ' -f1) == "$(cut -d' ' -f1 <"$seeded")" ]]; then
+    if ! cmp -s "$packaged" "$target"; then
+      install -m 600 "$packaged" "$target"
+      sha256sum <"$packaged" >"$seeded"
+      log "event=${label}-refreshed path=$target"
+    fi
+  else
+    log "event=${label}-kept-user-copy path=$target"
+  fi
+}
+
+ensure_config() {
+  seed_file "$jetson_data/default-shell.json" "$shell_config" config
+  # The Jetson menu additions are merged by the shell over the upstream menu.
+  seed_file "$jetson_data/default-menu-extension.jsonc" "$menu_extension" menu-extension
+}
+
+shell_ping() {
+  timeout --kill-after=1s 2s qs ipc -n -p "$shell_root/shell" \
+    call -- shell ping 2>/dev/null | grep -qx 'ok'
+}
+
+stop_shell() {
+  terminating=1
+  [[ -n $shell_pid ]] && kill -TERM "$shell_pid" 2>/dev/null || true
+}
+
+run_shell() {
+  local status=1
+  [[ -f $shell_root/shell/shell.qml ]] || {
+    log "event=start-failed reason=missing-shell path=$shell_root/shell/shell.qml"
+    return 1
+  }
+
+  ensure_config
+  trap stop_shell HUP INT TERM
+  quickshell -n -p "$shell_root/shell" &
+  shell_pid=$!
+
+  for _ in {1..50}; do
+    if ! kill -0 "$shell_pid" 2>/dev/null; then
+      wait "$shell_pid" || status=$?
+      log "event=start-failed reason=early-exit status=$status"
+      return "$status"
+    fi
+    if shell_ping; then
+      healthy=1
+      log "event=healthy pid=$shell_pid"
+      break
+    fi
+    sleep 0.1
+  done
+
+  if (( !healthy )); then
+    log 'event=start-failed reason=health-timeout timeout=5s'
+    kill -TERM "$shell_pid" 2>/dev/null || true
+    wait "$shell_pid" || true
+    return 1
+  fi
+
+  status=0
+  wait "$shell_pid" || status=$?
+  if (( terminating )); then
+    log 'event=stopped reason=requested'
+    return 0
+  fi
+  if (( status != 0 )); then
+    log "event=crashed status=$status"
+  else
+    log 'event=stopped status=0'
+  fi
+  return "$status"
+}
+
+case ${1:-status} in
+  run) run_shell ;;
+  start) systemctl --user start omarchy-jetson-shell.service ;;
+  stop) systemctl --user stop omarchy-jetson-shell.service ;;
+  restart) systemctl --user restart omarchy-jetson-shell.service ;;
+  status)
+    systemctl --user status omarchy-jetson-shell.service --no-pager
+    ;;
+  ping) shell_ping ;;
+  *) printf 'Usage: omarchy-jetson-shell {run|start|stop|restart|status|ping}\n' >&2; exit 2 ;;
+esac

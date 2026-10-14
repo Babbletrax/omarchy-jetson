@@ -1,0 +1,20 @@
+--- a/tools/ota_tools/version_upgrade/ota_make_recovery_img_dtb.sh
++++ b/tools/ota_tools/version_upgrade/ota_make_recovery_img_dtb.sh
+@@ -116,14 +116,16 @@
+ 	rm -f "${_initrd_dir}/${ssh_config_dir}/"ssh_host_*_key.pub
+ 	ssh-keygen -t rsa -N "" -f "${_initrd_dir}/${ssh_config_dir}/ssh_host_rsa_key" >/dev/null 2>&1;check_error
+ 	ssh-keygen -t ecdsa -N "" -f "${_initrd_dir}/${ssh_config_dir}/ssh_host_ecdsa_key" >/dev/null 2>&1;check_error
+-	ssh-keygen -t dsa -N "" -f "${_initrd_dir}/${ssh_config_dir}/ssh_host_dsa_key" >/dev/null 2>&1;check_error
+ 	ssh-keygen -t ed25519 -N "" -f "${_initrd_dir}/${ssh_config_dir}/ssh_host_ed25519_key" >/dev/null 2>&1;check_error
++	mkdir -p "${_initrd_dir}/usr/share/empty.sshd";check_error
++	chmod 755 "${_initrd_dir}/usr/share/empty.sshd";check_error
+ 
+ 	# password for root
+ 	local passwd_file="/etc/passwd"
+ 	local shadow_file="/etc/shadow"
+ 	echo "root:x:0:0:root:/root:/bin/bash" >"${_initrd_dir}/${passwd_file}"
+ 	echo "sshd:x:104:65534::/run/sshd:/usr/sbin/nologin" >>"${_initrd_dir}/${passwd_file}"
++	echo "nobody:x:65534:65534:Nobody:/:/usr/sbin/nologin" >>"${_initrd_dir}/${passwd_file}"
+ 	echo "root:\$6\$qYzNFHlg\$M4RG6AtkTS3kj1/Al2WqoRvUxWL9mFRjUadC74qSBhgWtkRjtVtiZJpJvAaG4DEHnJKSnOVwX4fHCt0A7vtXR/:18192:0:99999:7:::" >"${_initrd_dir}/${shadow_file}"
+ 	echo "sshd:\*:17669:0:99999:7:::" >>"${_initrd_dir}/${shadow_file}"
+ 

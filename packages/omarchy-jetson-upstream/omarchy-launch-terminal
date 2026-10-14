@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+terminal=${OMARCHY_TERMINAL:-foot}
+title=
+header_color=
+
+while (($#)); do
+  case $1 in
+    --title)
+      (($# >= 2)) || { printf 'omarchy-launch-terminal: --title requires a value\n' >&2; exit 2; }
+      title=$2
+      shift 2
+      ;;
+    --header-color)
+      (($# >= 2)) || { printf 'omarchy-launch-terminal: --header-color requires a value\n' >&2; exit 2; }
+      header_color=$2
+      shift 2
+      ;;
+    --)
+      shift
+      break
+      ;;
+    *) break ;;
+  esac
+done
+
+terminal_args=()
+[[ -z $title ]] || terminal_args+=(--title "$title")
+if [[ -n $header_color ]]; then
+  [[ $header_color =~ ^[[:xdigit:]]{8}$ ]] || {
+    printf 'omarchy-launch-terminal: header colour must be AARRGGBB\n' >&2
+    exit 2
+  }
+  terminal_args+=(
+    --override=csd.preferred=client
+    "--override=csd.color=$header_color"
+    --override=csd.button-color=ffffffff
+    --override=csd.border-width=1
+  )
+fi
+
+exec setsid uwsm-app -- "$terminal" "${terminal_args[@]}" "$@"

@@ -1,0 +1,27 @@
+# Maintainer: omarchy-jetson contributors
+
+pkgname=omarchy-jetson-actions
+pkgver=4.0.1
+pkgrel=4
+pkgdesc='Omarchy capture actions adapted for the Jetson desktop'
+arch=('aarch64')
+url='https://github.com/omacom/omarchy'
+license=('MIT')
+depends=('bash' 'coreutils' 'ffmpeg' 'grim' 'hyprland' 'hyprpicker' 'jq' 'libpulse' 'slurp' 'systemd' 'tesseract' 'tesseract-data-eng' 'wf-recorder' 'wl-clipboard' 'xdg-utils')
+
+source=(
+  'omarchy-capture-screenrecording'
+  "PROJECT-LICENSE::file://${startdir}/../../LICENSE"
+)
+sha256sums=('9bce1cfd1960461e10b0158d90ebf94ff54f9648eca5e7f9feb3ab3a7aca4732'
+            '83cfe731d9126f1c55f3663e7c6e51e37267420bd92cfeafcb8ab96d2a9c12a2')
+
+package() {
+  # Upstream Omarchy now provides the screenshot, region, OCR and notification
+  # commands. Only screen recording stays Jetson-specific: upstream's
+  # gpu-screen-recorder needs libnvidia-encode, which Jetson does not ship, so
+  # this wf-recorder version overrides it from /usr/lib/omarchy-jetson/bin.
+  install -Dm755 omarchy-capture-screenrecording \
+    "$pkgdir/usr/lib/omarchy-jetson/bin/omarchy-capture-screenrecording"
+  install -Dm644 PROJECT-LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

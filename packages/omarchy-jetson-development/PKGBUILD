@@ -1,0 +1,37 @@
+# Maintainer: omarchy-jetson contributors
+
+pkgname=omarchy-jetson-development
+pkgver=0.1.0
+pkgrel=4
+pkgdesc='Native development environment for Omarchy Jetson (BSP components pinned)'
+arch=('aarch64')
+url='https://github.com/OWNER/omarchy-jetson'
+license=('MIT')
+depends=(
+  '1password-cli'
+  'base-devel'
+  'clang'
+  'cmake'
+  'docker'
+  'gdb'
+  'git'
+  'linux-jetson-headers=6.8.12.1021'
+  'meson'
+  'ninja'
+  'nvidia-jetson-cuda=13.2.86'
+  'opencv'
+  'python'
+  'python-numpy'
+  'python-pillow'
+  'python-pip'
+  'python-scipy'
+  'rust'
+  'visual-studio-code-bin'
+)
+
+source=("PROJECT-LICENSE::file://${startdir}/../../LICENSE")
+sha256sums=('83cfe731d9126f1c55f3663e7c6e51e37267420bd92cfeafcb8ab96d2a9c12a2')
+
+package() {
+  install -Dm644 PROJECT-LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

@@ -1,0 +1,23 @@
+--- a/tools/l4t_update_initrd.sh
++++ b/tools/l4t_update_initrd.sh
+@@ -58,9 +58,9 @@ function InitVar
+ 	ROOTFS_RESOLV_CONF_SAVED="${L4T_ROOTFS_DIR}/etc/resolv.conf.saved"
+ 	QEMU_BIN=""
+ 	ROOTFS_QEMU_BINARY="${L4T_ROOTFS_DIR}/usr/bin/qemu-aarch64-static"
+ 
+-	LSB_RELEASE_PATH="${L4T_ROOTFS_DIR}/etc/lsb-release"
+-	if [ ! -f "${LSB_RELEASE_PATH}" ]; then
++	OS_RELEASE_PATH="${L4T_ROOTFS_DIR}/etc/os-release"
++	if [ ! -f "${OS_RELEASE_PATH}" ]; then
+ 		echo "ERROR: ${L4T_ROOTFS_DIR} is not populated."
+ 		exit 1
+ 	fi
+@@ -143,7 +143,7 @@ function UpdateInitrd
+ 	# Update the initrd in the rootfs.
+ 	trap CleanupVirEnv EXIT
+ 	PrepareVirEnv
+-	cmd="LC_ALL=C chroot \"${L4T_ROOTFS_DIR}\" nv-update-initrd ${cmd_args}"
++	cmd="LC_ALL=C chroot \"${L4T_ROOTFS_DIR}\" /usr/sbin/nv-update-initrd ${cmd_args}"
+ 	if ! eval "$cmd"; then
+ 		echo "ERROR: nv-update-initrd failed!"
+ 		exit 1

@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+log() {
+  logger -t omarchy-jetson-upstream -- "$*" 2>/dev/null || true
+}
+
+mapfile -t compositor_pids < <(pgrep -x Hyprland 2>/dev/null || true)
+if ((${#compositor_pids[@]} == 0)); then
+  exit 0
+fi
+
+declare -A reloaded_uids=()
+status=0
+
+for pid in "${compositor_pids[@]}"; do
+  uid=$(stat -c %u "/proc/$pid" 2>/dev/null) || continue
+  if [[ $uid -lt 1000 || -n ${reloaded_uids[$uid]:-} ]]; then
+    continue
+  fi
+  reloaded_uids[$uid]=1
+
+  user=$(getent passwd "$uid" | cut -d: -f1)
+  if [[ -z $user || ! -S /run/user/$uid/bus ]]; then
+    log "Skipping Hyprland reload for uid $uid: active user bus not found"
+    status=1
+    continue
+  fi
+
+  mapfile -t session_environment < <(
+    runuser -u "$user" -- env \
+      "XDG_RUNTIME_DIR=/run/user/$uid" \
+      "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus" \
+      systemctl --user show-environment 2>/dev/null
+  )
+
+  signature=
+  display=
+  for entry in "${session_environment[@]}"; do
+    case $entry in
+      HYPRLAND_INSTANCE_SIGNATURE=*) signature=${entry#*=} ;;
+      WAYLAND_DISPLAY=*) display=${entry#*=} ;;
+    esac
+  done
+
+  if [[ -z $signature || -z $display ]]; then
+    log "Skipping Hyprland reload for uid $uid: compositor environment not found"
+    status=1
+    continue
+  fi
+
+  if runuser -u "$user" -- env \
+    "XDG_RUNTIME_DIR=/run/user/$uid" \
+    "HYPRLAND_INSTANCE_SIGNATURE=$signature" \
+    "WAYLAND_DISPLAY=$display" \
+    hyprctl reload >/dev/null 2>&1; then
+    log "Reloaded Hyprland for uid $uid after bindings package transaction"
+  else
+    log "Hyprland reload failed for uid $uid after bindings package transaction"
+    status=1
+  fi
+done
+
+exit "$status"

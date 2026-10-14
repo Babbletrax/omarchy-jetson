@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+state_file="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/indicators/stay-awake"
+if [[ -e $state_file ]]; then
+  logger --tag omarchy-jetson-idle -- \
+    'level=info event=idle-lock-skipped reason=stay-awake' 2>/dev/null || true
+  exit 0
+fi
+
+exec omarchy-system-lock

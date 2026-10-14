@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "resolved_at": "2026-09-01",
+  "artifacts": {
+    "archlinuxarm_rootfs": {
+      "filename": "ArchLinuxARM-aarch64-latest.tar.gz",
+      "source_url": "http://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz",
+      "bytes": 829367415,
+      "sha256": "42a4eeaa038994ffd31fa173256ef2f0ef511358eeb41b9ea1f8626391b9b319",
+      "signature_url": "http://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz.sig",
+      "signature_sha256": "0157d8cd6261c85205931c766b754d6d56112b28800666fb64add1de192ebe11",
+      "signature_created": "2026-08-05T12:41:42Z",
+      "signing_key_fingerprint": "68B3537F39A313B3E574D06777193F152BDBE6A6",
+      "signature_verified": true,
+      "transport_note": "Official host TLS name mismatch; downloaded by HTTP and accepted only after detached OpenPGP verification against the independently published full fingerprint."
+    },
+    "nvidia_jetson_linux_bsp": {
+      "filename": "Jetson_Linux_R39.2.1_aarch64.tbz2",
+      "source_url": "https://developer.download.nvidia.com/embedded/L4T/r39_Release_v2.1/release/Jetson_Linux_R39.2.1_aarch64.tbz2",
+      "bytes": 1287223769,
+      "sha1": "8fe9a3ac9a98550b6077df450441599141ba47fb",
+      "sha1_manifest_url": "https://developer.download.nvidia.com/embedded/L4T/r39_Release_v2.1/release/release_sha_hashes.txt",
+      "sha1_matches_publisher_manifest": true,
+      "sha256": "2e5619088ba88e85dab25247f033d70659b6f676ff835176a07766dcb0fdbe6b",
+      "l4t_initrd_sha256": "5e52dc0b1be70a3650a2aeb0e350108fd877b5cb0074325f0f748e630d5566e8",
+      "license_accepted_by_user": "2026-09-01"
+    },
+    "omarchy": {
+      "repository": "https://github.com/omacom/omarchy.git",
+      "branch": "quattro",
+      "commit": "b686ed892d9c3020c3336203f6d34cc75b544e2b"
+    }
+  }
+}

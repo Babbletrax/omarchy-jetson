@@ -1,0 +1,12 @@
+[terminal]
+vt = 1
+
+# tuigreet remembers the last user and session. Automatic login is deliberately
+# not packaged: it needs a site-specific user name. To enable it locally, add
+#
+#   [initial_session]
+#   command = "uwsm start -e -D Hyprland hyprland.desktop"
+#   user = "<your user>"
+[default_session]
+command = "tuigreet --time --remember --remember-session --user-menu --sessions /usr/share/wayland-sessions --cmd 'uwsm start -e -D Hyprland hyprland.desktop'"
+user = "greeter"

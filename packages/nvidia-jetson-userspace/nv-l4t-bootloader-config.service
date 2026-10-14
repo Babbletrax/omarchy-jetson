@@ -1,0 +1,13 @@
+[Unit]
+Description=Verify successful NVIDIA L4T boot
+After=local-fs.target
+Before=shutdown.target reboot.target halt.target
+ConditionPathExists=/sys/firmware/efi/efivars
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/nvbootctrl verify
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

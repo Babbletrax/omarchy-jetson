@@ -1,0 +1,13 @@
+# Reviewed exceptions for tests/public-hygiene.sh.
+# Format: path:regex  (path may be a bash glob; regex is ERE matched against
+# the offending line, or against the path itself for binary/size findings).
+# Keep this list short and explain each entry.
+
+# The support-bundle redactor must recognise 1Password secret references.
+packages/omarchy-jetson-observability/omarchy-jetson-support:op://
+# Its test feeds a sample secret reference through the redactor.
+tests/observability.sh:op://
+
+# Generated from upstream Omarchy's own menu (scripts/generate-menu-extension.py),
+# which ships its own agent entries.
+packages/omarchy-jetson-upstream/default-menu-extension.jsonc:[Hh]ermes

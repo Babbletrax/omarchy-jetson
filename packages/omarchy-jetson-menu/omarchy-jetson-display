@@ -1,0 +1,259 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly state_dir="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy-jetson/displays"
+menu_font() {
+  local scale state="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy-jetson/appearance.json"
+  [[ -f $state ]] && scale=$(jq -r '.ui_scale // "1"' "$state" 2>/dev/null) || scale=1
+  case "$scale" in
+    1) printf '%s' "${OMARCHY_MENU_FONT:-monospace:size=16}" ;; 1.25) printf 'monospace:size=20' ;;
+    1.5) printf 'monospace:size=24' ;; 1.75) printf 'monospace:size=28' ;; 2) printf 'monospace:size=32' ;;
+    *) printf 'monospace:size=16' ;;
+  esac
+}
+
+fuzzel_config_args() {
+  local config="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy-jetson/fuzzel.ini"
+  [[ -r $config ]] && printf '%s\n' --config "$config"
+}
+
+log() { logger --tag omarchy-display -- "level=$1 ${*:2}" 2>/dev/null || true; }
+notify() {
+  command -v omarchy-notification-send >/dev/null 2>&1 &&
+    omarchy-notification-send -u normal "$1" "$2" >/dev/null 2>&1 || true
+}
+die() { log error "$*"; printf 'omarchy-jetson-display: %s\n' "$*" >&2; exit 2; }
+
+monitor_json() { hyprctl monitors all -j; }
+
+choose() {
+  local prompt=$1 config_args=()
+  mapfile -t config_args < <(fuzzel_config_args)
+  fuzzel "${config_args[@]}" --dmenu --only-match --minimal-lines --lines=12 --width=58 \
+    --font="$(menu_font)" --prompt="$prompt > " --with-nth=2 --accept-nth=1
+}
+
+validate_output() { [[ $1 =~ ^[A-Za-z0-9_.:-]+$ ]] || die "invalid-output=$1"; }
+validate_mode() { [[ $1 =~ ^[0-9]+x[0-9]+@[0-9]+([.][0-9]+)?(Hz)?$ ]] || die "invalid-mode=$1"; }
+validate_position() { [[ $1 =~ ^-?[0-9]+x-?[0-9]+$ ]] || die "invalid-position=$1"; }
+validate_scale() {
+  if [[ ! $1 =~ ^[0-9]+(\.[0-9]{1,2})?$ ]]; then
+    die "invalid-scale=$1"
+  fi
+  if ! awk -v scale="$1" 'BEGIN { exit !(scale >= 1 && scale <= 4) }'; then
+    die "invalid-scale=$1"
+  fi
+}
+
+mode_dimensions() {
+  local mode=$1 dimensions
+  dimensions=${mode%%@*}
+  printf '%s\t%s\n' "${dimensions%x*}" "${dimensions#*x}"
+}
+
+validate_tuple() {
+  local output=$1 mode=$2 position=$3 scale=$4 width height scale_hundred
+  validate_output "$output"
+  validate_mode "$mode"
+  validate_position "$position"
+  validate_scale "$scale"
+  # A mode outside the EDID list is allowed but flagged. Hyprland can often
+  # drive one the display never advertised, and set_confirmed rolls back when
+  # it cannot, so refusing outright would block 4K and ultra-wide panels whose
+  # EDID this KVM does not pass through.
+  monitor_json | jq -e --arg output "$output" --arg mode "$mode" \
+    '.[] | select(.name == $output) | .availableModes | index($mode)' >/dev/null ||
+    log warning "event=mode-not-advertised output=$output mode=$mode action=attempting"
+  read -r width height < <(mode_dimensions "$mode")
+  scale_hundred=$(awk -v scale="$scale" 'BEGIN { printf "%d", scale * 100 + 0.5 }')
+  (((width * 100) % scale_hundred == 0 && (height * 100) % scale_hundred == 0)) ||
+    die "non-integral-scale mode=$mode scale=$scale"
+}
+
+apply_tuple() {
+  local output=$1 mode=$2 position=$3 scale=$4
+  validate_tuple "$output" "$mode" "$position" "$scale"
+  hyprctl eval "hl.monitor({ output = \"$output\", mode = \"$mode\", position = \"$position\", scale = $scale })" |
+    grep -Fxq ok || die "hyprland-rejected output=$output mode=$mode position=$position scale=$scale"
+  # hyprctl answers ok even when the sink refuses the mode, so confirm the
+  # switch actually happened. Without this, choosing a mode the attached
+  # display cannot drive looks like the menu silently did nothing.
+  local want_width want_height actual
+  read -r want_width want_height < <(mode_dimensions "$mode")
+  sleep 0.5
+  actual=$(monitor_json | jq -r --arg output "$output" \
+    '.[] | select(.name == $output) | "\(.width)x\(.height)"')
+  if [[ $actual != "${want_width}x${want_height}" ]]; then
+    notify "Resolution unchanged" \
+      "$output cannot display ${want_width}x${want_height}. Still running $actual."
+    die "display-rejected-mode output=$output requested=${want_width}x${want_height} active=$actual"
+  fi
+  log info "event=apply output=$output mode=$mode position=$position scale=$scale"
+}
+
+current_tuple() {
+  local output=$1
+  monitor_json | jq -er --arg output "$output" '
+    .[] | select(.name == $output and .disabled == false) |
+    ("\(.width)x\(.height)@") as $mode_prefix |
+    .refreshRate as $active_refresh |
+    (.availableModes |
+      map(select(startswith($mode_prefix)) |
+        {mode: ., distance: ((capture("@(?<hz>[0-9.]+)(Hz)?$").hz | tonumber) - $active_refresh | fabs)}) |
+      min_by(.distance).mode) as $mode |
+    if $mode == null then error("active mode is not advertised") else
+      [.name, $mode, ("\(.x)x\(.y)"),
+       (if .scale == 1 then "1" elif .scale == 2 then "2" else (.scale | tostring) end)] | @tsv
+    end
+  '
+}
+
+persist_tuple() {
+  local output=$1 mode=$2 position=$3 scale=$4 temporary
+  mkdir -p "$state_dir"
+  temporary=$(mktemp "$state_dir/.${output}.XXXXXX")
+  printf '%s\t%s\t%s\t%s\n' "$output" "$mode" "$position" "$scale" >"$temporary"
+  chmod 600 "$temporary"
+  mv -f "$temporary" "$state_dir/$output.tsv"
+  log info "event=persist output=$output mode=$mode position=$position scale=$scale"
+}
+
+confirm_keep() {
+  local selected status config_args=()
+  mapfile -t config_args < <(fuzzel_config_args)
+  set +e
+  selected=$(printf 'revert\tRevert\nkeep\tKeep this display setting\n' |
+    timeout 15s fuzzel "${config_args[@]}" --dmenu --only-match --lines=2 --width=48 --font="$(menu_font)" \
+      --prompt='Display works? > ' --with-nth=2 --accept-nth=1)
+  status=$?
+  set -e
+  [[ $status == 0 && $selected == keep ]]
+}
+
+set_confirmed() {
+  local output=$1 mode=$2 position=$3 scale=$4 previous
+  previous=$(current_tuple "$output") || die "active-output-not-found output=$output"
+  apply_tuple "$output" "$mode" "$position" "$scale"
+  if confirm_keep; then
+    persist_tuple "$output" "$mode" "$position" "$scale"
+  else
+    IFS=$'\t' read -r output mode position scale <<<"$previous"
+    apply_tuple "$output" "$mode" "$position" "$scale"
+    log warning "event=rollback output=$output reason=not-confirmed"
+  fi
+}
+
+save_current() {
+  local output=$1 tuple mode position scale
+  if [[ -n $output ]]; then
+    validate_output "$output"
+  else
+    local name
+    for name in $(monitor_json | jq -r '.[] | select(.disabled == false) | .name'); do
+      save_current "$name"
+    done
+    return 0
+  fi
+  tuple=$(current_tuple "$output") || die "active-output-not-found output=$output"
+  IFS=$'\t' read -r output mode position scale <<<"$tuple"
+  persist_tuple "$output" "$mode" "$position" "$scale"
+  log info "event=save-current output=$output mode=$mode position=$position scale=$scale"
+}
+
+apply_saved() {
+  local file output mode position scale
+  [[ -d $state_dir ]] || return 0
+  for file in "$state_dir"/*.tsv; do
+    [[ -e $file ]] || continue
+    IFS=$'\t' read -r output mode position scale <"$file"
+    (apply_tuple "$output" "$mode" "$position" "$scale") ||
+      log error "event=saved-apply-failed file=${file##*/}"
+  done
+}
+
+select_output() {
+  monitor_json | jq -r '.[] | select(.disabled == false) | [.name, (.name + " — " + .description)] | @tsv' |
+    choose 'Monitor'
+}
+
+# Modes worth offering even when the attached display does not advertise them:
+# this KVM caps its EDID at 1080p, so a real 4K or ultra-wide panel would
+# otherwise be unreachable from the menu.
+readonly extra_modes=(
+  '3840x2160@60.00Hz	4K UHD 60Hz'
+  '3840x2160@30.00Hz	4K UHD 30Hz'
+  '3440x1440@60.00Hz	Ultra-wide 3440x1440 60Hz'
+  '2560x1440@60.00Hz	QHD 2560x1440 60Hz'
+  '2560x1080@60.00Hz	Ultra-wide 2560x1080 60Hz'
+  '1920x1200@60.00Hz	WUXGA 1920x1200 60Hz'
+)
+
+select_mode() {
+  local output=$1 advertised extra mode label
+  advertised=$(monitor_json | jq -r --arg output "$output" '
+    .[] | select(.name == $output) | .availableModes[] | [., . + "  (advertised)"] | @tsv
+  ')
+  {
+    printf '%s\n' "$advertised"
+    for extra in "${extra_modes[@]}"; do
+      mode=${extra%%$'\t'*}
+      label=${extra#*$'\t'}
+      grep -qF "$mode" <<<"$advertised" || printf '%s\t%s  (not advertised)\n' "$mode" "$label"
+    done
+  } | choose 'Resolution and refresh'
+}
+
+select_scale() {
+  local mode=$1 scale width height
+  read -r width height < <(mode_dimensions "$mode")
+  for scale in 1 1.25 1.5 1.75 2; do
+    local scale_hundred=${scale/./}
+    case "$scale" in 1) scale_hundred=100 ;; 1.25) scale_hundred=125 ;;
+      1.5) scale_hundred=150 ;; 1.75) scale_hundred=175 ;; 2) scale_hundred=200 ;; esac
+    if (((width * 100) % scale_hundred == 0 && (height * 100) % scale_hundred == 0)); then
+      printf '%s\t%s× UI scale\n' "$scale" "$scale"
+    fi
+  done | choose 'Scale'
+}
+
+select_position() {
+  local output=$1 mode=$2 scale=$3 current width height logical_width logical_height
+  local left_x top_y right_x bottom_y
+  current=$(current_tuple "$output" | cut -f3)
+  read -r width height < <(mode_dimensions "$mode")
+  logical_width=$(awk -v value="$width" -v divisor="$scale" 'BEGIN { printf "%d", value / divisor }')
+  logical_height=$(awk -v value="$height" -v divisor="$scale" 'BEGIN { printf "%d", value / divisor }')
+  read -r left_x top_y right_x bottom_y < <(monitor_json | jq -r --arg output "$output" '
+    [.[] | select(.name != $output and .disabled == false)] as $others |
+    if ($others | length) == 0 then [0, 0, 0, 0]
+    else [($others | map(.x) | min), ($others | map(.y) | min),
+          ($others | map(.x + .width) | max), ($others | map(.y + .height) | max)] end |
+    @tsv
+  ')
+  printf '%s\tKeep current position (%s)\n' "$current" "$current"
+  printf '0x0\tPrimary position (0x0)\n'
+  printf '%sx%s\tPlace right of other monitors\n' "$right_x" "$top_y"
+  printf '%sx%s\tPlace left of other monitors\n' "$((left_x - logical_width))" "$top_y"
+  printf '%sx%s\tPlace below other monitors\n' "$left_x" "$bottom_y"
+  printf '%sx%s\tPlace above other monitors\n' "$left_x" "$((top_y - logical_height))"
+}
+
+menu() {
+  local output mode scale position
+  output=$(select_output) || return 0
+  mode=$(select_mode "$output") || return 0
+  scale=$(select_scale "$mode") || return 0
+  position=$(select_position "$output" "$mode" "$scale" | choose 'Position') || return 0
+  set_confirmed "$output" "$mode" "$position" "$scale"
+}
+
+case "${1:-list}" in
+  list) monitor_json ;;
+  menu) menu ;;
+  current) current_tuple "${2:?output required}" ;;
+  set) set_confirmed "${2:?output required}" "${3:?mode required}" "${4:?position required}" "${5:?scale required}" ;;
+  apply-saved) apply_saved ;;
+  save-current) save_current "${2:-}" ;;
+  *) die "unknown-command=${1:-}" ;;
+esac

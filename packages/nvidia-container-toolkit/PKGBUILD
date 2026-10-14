@@ -1,0 +1,87 @@
+# Maintainer: omarchy-jetson contributors
+
+pkgname=nvidia-container-toolkit-jetson
+pkgver=1.19.1
+pkgrel=6
+pkgdesc='Pinned NVIDIA Container Toolkit for Jetson Linux R39.2.1'
+arch=('aarch64')
+url='https://github.com/NVIDIA/nvidia-container-toolkit'
+license=('Apache-2.0')
+depends=('glibc' 'libcap' 'libseccomp')
+provides=('libnvidia-container' 'nvidia-container-toolkit')
+conflicts=('libnvidia-container' 'nvidia-container-toolkit')
+options=('!strip' '!debug')
+
+source=('sources.lock' 'arch-linux.csv' 'nvidia-cdi-refresh-jetson.service')
+sha256sums=(
+  '28ec7f7f60936413858cfbfd3c7bcbe532b6aa599b64b437a62b843b95ff37d4'
+  '0f219b6331cc046760bacf0fe7bba4c92e4bd36cb8872baa54a989996c3d2c40'
+  'c392d55d9a4ab8e29cc5bdcca8f8cb9f171efe5ce36a6089fb7a7a80c56177f2'
+)
+
+while IFS='|' read -r package version path digest; do
+  case "$package" in
+    ''|'#'*) continue ;;
+  esac
+  source+=("${path##*/}::https://repo.download.nvidia.com/jetson/common/${path}")
+  sha256sums+=("$digest")
+done < "$startdir/sources.lock"
+
+package() {
+  local package version path digest archive data_member
+
+  while IFS='|' read -r package version path digest; do
+    case "$package" in
+      ''|'#'*) continue ;;
+    esac
+
+    archive="$srcdir/${path##*/}"
+    data_member=$(bsdtar -tf "$archive" | sed -n '/^data\.tar/{p;q;}')
+    test -n "$data_member"
+    bsdtar -xOf "$archive" "$data_member" |
+      bsdtar --no-same-owner -xf - -C "$pkgdir"
+  done < "$srcdir/sources.lock"
+
+  # Debian's postinst creates this compatibility name. Package it
+  # declaratively so no Debian maintainer script is executed on Arch.
+  ln -s nvidia-container-runtime-hook \
+    "$pkgdir/usr/bin/nvidia-container-toolkit"
+
+  # Arch does not search Debian's multiarch library directory. Expose only
+  # this package's libraries through Arch's standard loader path.
+  ln -s aarch64-linux-gnu/libnvidia-container.so.1 \
+    "$pkgdir/usr/lib/libnvidia-container.so.1"
+  ln -s aarch64-linux-gnu/libnvidia-container-go.so.1 \
+    "$pkgdir/usr/lib/libnvidia-container-go.so.1"
+
+  install -d "$pkgdir/usr/share/licenses/$pkgname"
+  install -m644 \
+    "$pkgdir/usr/share/doc/nvidia-container-toolkit/copyright" \
+    "$pkgdir/usr/share/licenses/$pkgname/toolkit-copyright"
+  install -m644 \
+    "$pkgdir/usr/share/doc/libnvidia-container1/copyright" \
+    "$pkgdir/usr/share/licenses/$pkgname/libnvidia-container-copyright"
+  install -Dm644 "$srcdir/arch-linux.csv" \
+    "$pkgdir/etc/nvidia-container-runtime/host-files-for-container.d/arch-linux.csv"
+  install -Dm644 "$srcdir/nvidia-cdi-refresh-jetson.service" \
+    "$pkgdir/etc/systemd/system/nvidia-cdi-refresh.service"
+  install -d "$pkgdir/etc/systemd/system/multi-user.target.wants"
+  ln -s ../nvidia-cdi-refresh.path \
+    "$pkgdir/etc/systemd/system/multi-user.target.wants/nvidia-cdi-refresh.path"
+
+  test -x "$pkgdir/usr/bin/nvidia-ctk"
+  test -x "$pkgdir/usr/bin/nvidia-container-cli"
+  test -x "$pkgdir/usr/bin/nvidia-container-runtime"
+  test -x "$pkgdir/usr/bin/nvidia-container-runtime-hook"
+  test -x "$pkgdir/usr/bin/nvidia-cdi-hook"
+  test -L "$pkgdir/usr/bin/nvidia-container-toolkit"
+  test -L "$pkgdir/usr/lib/aarch64-linux-gnu/libnvidia-container.so.1"
+  test -L "$pkgdir/usr/lib/libnvidia-container.so.1"
+  test -L "$pkgdir/usr/lib/libnvidia-container-go.so.1"
+  test -f "$pkgdir/etc/nvidia-container-toolkit/nvidia-cdi-refresh.env"
+  test -f "$pkgdir/etc/systemd/system/nvidia-cdi-refresh.path"
+  test -f "$pkgdir/etc/systemd/system/nvidia-cdi-refresh.service"
+  test -L "$pkgdir/etc/systemd/system/multi-user.target.wants/nvidia-cdi-refresh.path"
+  grep -Fxq 'lib, /opt/nvidia/l4t-gpu-libs/nvgpu/libcuda.so.1.1' \
+    "$pkgdir/etc/nvidia-container-runtime/host-files-for-container.d/arch-linux.csv"
+}

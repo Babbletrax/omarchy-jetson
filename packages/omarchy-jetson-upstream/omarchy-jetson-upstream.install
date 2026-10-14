@@ -1,0 +1,10 @@
+# shellcheck shell=bash
+
+post_install() {
+  /usr/lib/omarchy-jetson/qt612-shell-fix || true
+  /usr/lib/omarchy-jetson/reload-hyprland || true
+}
+
+post_upgrade() {
+  post_install
+}

@@ -1,0 +1,28 @@
+# Maintainer: omarchy-jetson contributors
+
+pkgname=omarchy-jetson-voice
+pkgver=0.1.0
+pkgrel=6
+pkgdesc='Safe voice-input lifecycle and recovery controls for Omarchy Jetson'
+arch=('aarch64')
+url='https://github.com/OWNER/omarchy-jetson'
+license=('MIT')
+depends=('bash' 'coreutils' 'jq' 'systemd' 'wtype')
+optdepends=('voxtype: local speech-to-text daemon')
+
+source=(
+  'omarchy-voice-control'
+  'voxtype.service'
+  "PROJECT-LICENSE::file://${startdir}/../../LICENSE"
+)
+sha256sums=(
+  '87f319d9cd5ad73791b6db5b1ffae4ca3df72542f38740cb39fb8d07878d368c'
+  'c009d70a3929a65085c9c57f02ca2d277eec979de3593f3ddb6d1aa9f07dc980'
+  '83cfe731d9126f1c55f3663e7c6e51e37267420bd92cfeafcb8ab96d2a9c12a2'
+)
+
+package() {
+  install -Dm755 omarchy-voice-control "$pkgdir/usr/bin/omarchy-voice-control"
+  install -Dm644 voxtype.service "$pkgdir/usr/lib/systemd/user/voxtype.service"
+  install -Dm644 PROJECT-LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

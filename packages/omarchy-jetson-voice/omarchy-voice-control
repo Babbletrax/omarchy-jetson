@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+voxtype_command=${OMARCHY_VOXTYPE_COMMAND:-voxtype}
+systemctl_command=${OMARCHY_VOICE_SYSTEMCTL:-systemctl}
+state_file=${OMARCHY_VOICE_STATE_FILE:-${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR is not set}/voxtype/state}
+
+usage() {
+  printf 'Usage: omarchy-voice-control {status|doctor|start|stop|cancel|recover}\n'
+}
+
+wait_for_idle() {
+  local state
+  for _ in {1..600}; do
+    state=$($voxtype_command status 2>/dev/null || true)
+    [[ $state == idle ]] && return 0
+    sleep 0.1
+  done
+  printf 'ERROR Voxtype did not return to idle; inspect: journalctl --user -u voxtype.service -n 100\n' >&2
+  return 1
+}
+
+resolved_value() {
+  $voxtype_command config get "$1" --json |
+    jq -r 'if has("value") then .value else error("missing resolved value") end'
+}
+
+doctor() {
+  local failures=0 key expected actual
+  if ! $systemctl_command --user is-active --quiet voxtype.service; then
+    printf 'FAIL  voxtype.service is not active\n' >&2
+    failures=$((failures + 1))
+  else
+    printf 'PASS  voxtype.service is active\n'
+  fi
+
+  while IFS=$'\t' read -r key expected; do
+    actual=$(resolved_value "$key")
+    if [[ $actual == "$expected" ]]; then
+      printf 'PASS  %s=%s\n' "$key" "$actual"
+    else
+      printf 'FAIL  %s must be %s, found %s\n' "$key" "$expected" "$actual" >&2
+      failures=$((failures + 1))
+    fi
+  done <<'EOF'
+hotkey.enabled	false
+output.mode	type
+output.auto_submit	false
+text.smart_auto_submit	false
+EOF
+
+  if command -v wtype >/dev/null 2>&1; then
+    printf 'PASS  focused Wayland typing driver is available\n'
+  else
+    printf 'FAIL  wtype is unavailable\n' >&2
+    failures=$((failures + 1))
+  fi
+  return "$failures"
+}
+
+case ${1:-} in
+  status)
+    printf 'service=%s\n' "$($systemctl_command --user is-active voxtype.service 2>/dev/null || true)"
+    printf 'state=%s\n' "$($voxtype_command status 2>/dev/null || printf unavailable)"
+    printf 'state_file=%s\n' "$state_file"
+    ;;
+  doctor) doctor ;;
+  start) $voxtype_command record start ;;
+  stop) $voxtype_command record stop ;;
+  cancel)
+    $voxtype_command record cancel
+    wait_for_idle
+    ;;
+  recover)
+    $systemctl_command --user restart voxtype.service
+    wait_for_idle
+    doctor
+    ;;
+  -h|--help|help|'') usage ;;
+  *) printf 'ERROR unknown voice-control command: %s\n' "$1" >&2; usage >&2; exit 2 ;;
+esac

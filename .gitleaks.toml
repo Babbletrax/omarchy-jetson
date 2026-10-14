@@ -1,0 +1,12 @@
+# gitleaks configuration: the default rules plus reviewed false positives.
+title = "omarchy-jetson"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Public OpenPGP signing-key fingerprints (40 hex digits), not secrets"
+regexTarget = "line"
+regexes = [
+  '''(?i)signing_key(_fingerprint)?['"]?\s*[:=]\s*['"]?[0-9A-F]{40}['"]?''',
+]

@@ -1,0 +1,25 @@
+#!/bin/bash
+
+set -u
+
+readonly log_dir=/var/log/omarchy-jetson-boot
+readonly marker="$log_dir/init-debug.marker"
+readonly kernel_log="$log_dir/kernel.log"
+readonly systemd_log="$log_dir/systemd.log"
+
+mkdir -p "$log_dir"
+{
+  printf 'init-debug reached at kernel uptime: '
+  cut -d' ' -f1 /proc/uptime
+  printf 'kernel command line: '
+  cat /proc/cmdline
+  printf 'root mount: '
+  findmnt -n -o SOURCE,FSTYPE,OPTIONS /
+} >"$marker" 2>&1
+
+dmesg >"$kernel_log" 2>&1
+sync
+
+dmesg --follow --raw >>"$kernel_log" 2>&1 &
+
+exec /usr/lib/systemd/systemd >>"$systemd_log" 2>&1

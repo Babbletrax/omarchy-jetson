@@ -1,0 +1,40 @@
+--- a/tools/kernel_flash/l4t_network_flash.func
++++ b/tools/kernel_flash/l4t_network_flash.func
+@@ -98,7 +98,8 @@ check_ufw_nfs_port_open() {
+ 	fi
+ 
+ 	# Check if UFW is active and NFS port is allowed.
+-	if ! echo "${ufw_status}" | grep -qE "^${nfs_required_port}\s+ALLOW\s"; then
++	if ! echo "${ufw_status}" | grep -qE \
++		"^${nfs_required_port}(/tcp)?([[:space:]]+on[[:space:]]+usb0)?[[:space:]]+ALLOW[[:space:]]"; then
+ 		log_debug "UFW verbose status:\n\n${ufw_status}\n"
+ 		log_error "UFW rule missing for ${nfs_required_port}"
+ 		status=1
+@@ -235,6 +235,11 @@ network_prerequisite ()
+ 	rpcbind >/dev/null 2>&1
+ 	set -e
+-	service nfs-kernel-server restart
++	if command -v systemctl >/dev/null 2>&1 \
++		&& systemctl list-unit-files nfs-server.service >/dev/null 2>&1; then
++		systemctl restart nfs-server.service
++	else
++		service nfs-kernel-server restart
++	fi
+ 	if ! showmount -e localhost; then
+ 		echo "NFS server is not running"
+ 		exit 114
+@@ -448 +454 @@
+-		ping6 -c 1 "$1" > /dev/null 2>&1;
++		ping -6 -c 1 "$1" > /dev/null 2>&1;
+--- a/tools/kernel_flash/l4t_initrd_flash_internal.sh
++++ b/tools/kernel_flash/l4t_initrd_flash_internal.sh
+@@ -435 +435 @@
+-	if ! ping6 -c 1 "fe80::1%$(cat "${sshcon}")" > /dev/null 2>&1;
++	if ! ping -6 -c 1 "fe80::1%$(cat "${sshcon}")" > /dev/null 2>&1;
+@@ -765 +765 @@
+-			log_error "Command failed: ping6 -c 1 fe80::1%$(cat "${sshcon}"). Check your network settings (firewall, VPN,...) so that it can ping fe80::1%$(cat "${sshcon}")"
++			log_error "Command failed: ping -6 -c 1 fe80::1%$(cat "${sshcon}"). Check your network settings (firewall, VPN,...) so that it can ping fe80::1%$(cat "${sshcon}")"
+--- a/tools/kernel_flash/l4t_flash_from_kernel.sh
++++ b/tools/kernel_flash/l4t_flash_from_kernel.sh
+@@ -29,0 +30 @@
++export PATH="${PATH}:/usr/sbin"

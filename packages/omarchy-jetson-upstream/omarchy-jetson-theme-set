@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+# Apply an Omarchy Quattro theme on the Jetson build.
+#
+# Follows the upstream stage/render/promote sequence: copy the theme into
+# next-theme, generate the per-application files from the pinned templates,
+# then swap next-theme into place, and finally run the per-application helpers
+# that this build ships. Each helper is optional and exits cleanly when its
+# application is absent, so a Jetson without Obsidian or tmux is not an error.
+
+readonly omarchy_path=${OMARCHY_PATH:-/usr/share/omarchy}
+readonly state_dir=${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/current
+readonly themes_dir=$omarchy_path/themes
+readonly user_themes_dir=${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/themes
+readonly current_theme=$state_dir/theme
+readonly next_theme=$state_dir/next-theme
+readonly background_link=$state_dir/background
+
+# The upstream renderer and helpers resolve their template and theme paths
+# from OMARCHY_PATH, so it must be exported, not just used locally.
+export OMARCHY_PATH="$omarchy_path"
+export PATH="$omarchy_path/bin:$PATH"
+
+die() { printf 'omarchy-jetson-theme-set: %s\n' "$*" >&2; exit 1; }
+
+list_themes() {
+  [[ -d $themes_dir ]] || return 0
+  find "$themes_dir" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort
+}
+
+resolve_theme() {
+  local requested=$1 slug candidate
+  slug=$(printf '%s' "$requested" | tr '[:upper:] ' '[:lower:]-')
+  while read -r candidate; do
+    [[ -z $candidate ]] && continue
+    [[ $candidate == "$requested" || $candidate == "$slug" ]] && { printf '%s' "$candidate"; return 0; }
+  done < <(list_themes)
+  return 1
+}
+
+stage_theme() {
+  local name=$1
+  rm -rf "$next_theme"
+  mkdir -p "$next_theme"
+  cp -r "$themes_dir/$name/." "$next_theme/"
+  if [[ -d $user_themes_dir/$name ]]; then
+    cp -r "$user_themes_dir/$name/." "$next_theme/"
+  fi
+  [[ -f $next_theme/colors.toml ]] ||
+    die "theme '$name' has no colors.toml; cannot generate shell.toml"
+}
+
+render_templates() {
+  command -v omarchy-theme-set-templates >/dev/null 2>&1 ||
+    die 'omarchy-theme-set-templates is missing; reinstall omarchy-jetson-upstream'
+  omarchy-theme-set-templates ||
+    die 'omarchy-theme-set-templates failed; check OMARCHY_PATH and colors.toml'
+  [[ -f $next_theme/shell.toml ]] ||
+    die 'template rendering produced no shell.toml'
+}
+
+promote_theme() {
+  local name=$1 background
+  rm -rf "$current_theme"
+  mv "$next_theme" "$current_theme"
+  printf '%s\n' "$name" >"$state_dir/theme.name"
+  background=$(find "$current_theme/backgrounds" -maxdepth 1 -type f 2>/dev/null | sort | head -1)
+  if [[ -n $background ]]; then
+    ln -nsf "$background" "$background_link"
+    # The plugin repaints on IPC, not by watching the link.
+    if command -v qs >/dev/null 2>&1; then
+      qs ipc -p "${OMARCHY_PATH:-/usr/share/omarchy}/shell" \
+        call background refresh >/dev/null 2>&1 || true
+    fi
+  fi
+}
+
+sync_applications() {
+  # Each helper no-ops when its application or session is missing. GNOME here
+  # means the freedesktop gsettings keys that every GTK application reads
+  # (colour scheme, GTK theme, icon theme), not the GNOME desktop.
+  local helper
+  for helper in omarchy-theme-set-gnome omarchy-theme-set-vscode \
+    omarchy-theme-set-obsidian omarchy-theme-set-tmux; do
+    command -v "$helper" >/dev/null 2>&1 || continue
+    "$helper" >/dev/null 2>&1 || printf 'warning: %s failed\n' "$helper" >&2
+  done
+}
+
+reload_shell() {
+  # QS_DISABLE_FILE_WATCHER is set for the service, so the shell is restarted
+  # rather than relying on it noticing the swapped theme directory.
+  systemctl --user restart omarchy-jetson-shell.service 2>/dev/null || true
+  if command -v hyprctl >/dev/null 2>&1 && [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]]; then
+    hyprctl reload >/dev/null 2>&1 || true
+  fi
+}
+
+case ${1:-} in
+  ''|-h|--help)
+    printf 'Usage: omarchy-jetson-theme-set <theme-name>\n       omarchy-jetson-theme-set --list\n' >&2
+    exit 2
+    ;;
+  --list|list)
+    list_themes
+    exit 0
+    ;;
+  --current|current)
+    cat "$state_dir/theme.name" 2>/dev/null || printf 'none\n'
+    exit 0
+    ;;
+esac
+
+[[ -d $themes_dir ]] ||
+  die "no theme catalogue at $themes_dir; reinstall omarchy (upstream themes)"
+
+theme_name=$(resolve_theme "$1") ||
+  die "unknown theme '$1'; try: omarchy-jetson-theme-set --list"
+
+mkdir -p "$state_dir"
+stage_theme "$theme_name"
+render_templates
+promote_theme "$theme_name"
+sync_applications
+reload_shell
+printf 'theme=%s shell-toml=%s background=%s\n' \
+  "$theme_name" \
+  "$([[ -f $current_theme/shell.toml ]] && echo present || echo missing)" \
+  "$(readlink "$background_link" 2>/dev/null || echo none)"

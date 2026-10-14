@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "product": "omarchy-jetson",
+  "release": "R1",
+  "architecture": "aarch64",
+  "board_config": "jetson-agx-orin-devkit",
+  "modules": ["P3701-0005"],
+  "carrier_boards": ["P3737-0000"],
+  "jetson_linux": "39.2.1",
+  "jetpack": "7.2.1",
+  "kernel": "6.8.12-1021-tegra",
+  "root_device": "nvme0n1p1",
+  "root_filesystem": "ext4",
+  "secure_boot": "not-enabled",
+  "emmc_runtime_policy": "unused"
+}

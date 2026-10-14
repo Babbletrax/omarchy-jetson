@@ -1,0 +1,21 @@
+# Maintainer: omarchy-jetson contributors
+pkgname=omarchy-jetson-notifications
+pkgver=0.1.0
+pkgrel=3
+pkgdesc='Notification centre and acknowledgement controls for Omarchy Jetson'
+arch=('aarch64')
+url='https://github.com/OWNER/omarchy-jetson'
+license=('MIT')
+depends=('bash' 'coreutils' 'jq' 'swaync' 'util-linux')
+source=('omarchy-notification-center' 'config.json' 'style.css'
+        "PROJECT-LICENSE::file://${startdir}/../../LICENSE")
+sha256sums=('dc96bc88d68a72b816c20a6a0991b21367f58aabf913ca316fbccbc331d06c2e'
+            'e79013af5b8eb56702541cf837749d9c76354bc5bdbd3fb02c722ca1e05f5a8b'
+            '59a39bb53edb8f4d5c5a31380a6b4e02f4da27c9b5a00657020409d5ec328113'
+            '83cfe731d9126f1c55f3663e7c6e51e37267420bd92cfeafcb8ab96d2a9c12a2')
+package() {
+  install -Dm755 omarchy-notification-center "$pkgdir/usr/bin/omarchy-notification-center"
+  install -Dm644 config.json "$pkgdir/usr/share/omarchy-jetson/notifications/config.json"
+  install -Dm644 style.css "$pkgdir/usr/share/omarchy-jetson/notifications/style.css"
+  install -Dm644 PROJECT-LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

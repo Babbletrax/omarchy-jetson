@@ -1,0 +1,15 @@
+# shellcheck shell=bash
+# Omarchy environment (OMARCHY_PATH + PATH), needed even for non-interactive
+# shells. env-bootstrap (upstream omarchy-settings) defaults OMARCHY_PATH to
+# /usr/share/omarchy; /etc/profile.d/omarchy-jetson.sh puts the Jetson
+# overrides in /usr/lib/omarchy-jetson/bin first on PATH.
+[[ -r /usr/share/omarchy/default/bash/env-bootstrap ]] &&
+  source /usr/share/omarchy/default/bash/env-bootstrap
+
+# If not running interactively, don't do anything else.
+[[ $- != *i* ]] && return
+
+# Default Omarchy aliases and functions.
+[[ -r $OMARCHY_PATH/default/bash/rc ]] && source "$OMARCHY_PATH/default/bash/rc"
+
+# Add your own exports, aliases, and functions below.

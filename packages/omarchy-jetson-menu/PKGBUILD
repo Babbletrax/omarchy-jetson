@@ -1,0 +1,49 @@
+# Maintainer: omarchy-jetson contributors
+
+pkgname=omarchy-jetson-menu
+pkgver=0.1.0
+pkgrel=32
+pkgdesc='Lightweight capability-aware Omarchy menu adapter for Jetson'
+arch=('aarch64')
+url='https://github.com/OWNER/omarchy-jetson'
+license=('MIT')
+depends=('bash' 'coreutils' 'file' 'findutils' 'foot' 'fuzzel' 'gawk' 'hyprland' 'jq' 'procps-ng' 'systemd' 'util-linux')
+optdepends=(
+  'btop: activity monitor menu entry'
+  'omarchy-jetson-session: lock and idle actions'
+  'nvidia-jetson-power: Jetson power status'
+  'omarchy-jetson-observability: named thermal, clock and unified-memory status'
+  'omarchy-jetson-actions: screenshot actions'
+)
+
+source=(
+  'omarchy-menu'
+  'omarchy-jetson-display'
+  'omarchy-jetson-screensaver'
+  'omarchy-jetson-appearance'
+  'omarchy-jetson-power'
+  'omarchy-jetson-bar'
+  'theme-dark-waybar.css'
+  'theme-light-waybar.css'
+  "PROJECT-LICENSE::file://${startdir}/../../LICENSE"
+)
+sha256sums=('5fd6706f5803a31e167c3a018e30ee6f2c1098b2bc889195a0ee775d09a46763'
+            '8154dc5e4d061a5fa471e5f723a373d7f63b0bd0aea2b5f9c67778c3c7d6ce54'
+            '35e2972a86ad12af8a01a22d0dc85dd7d04bf019ad04b9cb83ee09036e8b41fe'
+            '1e68cc918ea649a07fdd4001f840e2cb46ec90cedf81145c02124fcf8e2e772d'
+            '71667ac36b6ffac85f846e87c240fe162952771baadff000682b264f2bfa6ed9'
+            '2ed792435dc1619c04da4d3f5bcf95f8acaa4888a6602b1420d7088eb9d01e3e'
+            'ddd474645eb76825f92d5156669120354fc0740f905c0d0d6c1c9ef3269c6d05'
+            '1afc227f6a9750cc47c1c7c07de3674e1906bd93c6fe2acecd2c1421a6765e5a'
+            '83cfe731d9126f1c55f3663e7c6e51e37267420bd92cfeafcb8ab96d2a9c12a2')
+
+package() {
+  install -Dm755 omarchy-jetson-display "$pkgdir/usr/bin/omarchy-jetson-display"
+  install -Dm755 omarchy-jetson-screensaver "$pkgdir/usr/bin/omarchy-jetson-screensaver"
+  install -Dm755 omarchy-jetson-appearance "$pkgdir/usr/bin/omarchy-jetson-appearance"
+  install -Dm755 omarchy-jetson-power "$pkgdir/usr/bin/omarchy-jetson-power"
+  install -Dm755 omarchy-jetson-bar "$pkgdir/usr/bin/omarchy-jetson-bar"
+  install -Dm644 theme-dark-waybar.css "$pkgdir/usr/share/omarchy-jetson/themes/dark/waybar.css"
+  install -Dm644 theme-light-waybar.css "$pkgdir/usr/share/omarchy-jetson/themes/light/waybar.css"
+  install -Dm644 PROJECT-LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

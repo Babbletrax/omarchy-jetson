@@ -1,0 +1,60 @@
+# Maintainer: omarchy-jetson contributors
+
+pkgname=nvidia-jetson-cuda
+pkgver=13.2.86
+pkgrel=1
+pkgdesc='Pinned CUDA compiler, runtime, and cuBLAS for Jetson Linux R39.2.1'
+arch=('aarch64')
+url='https://developer.nvidia.com/embedded/jetpack'
+license=('LicenseRef-NVIDIA-CUDA')
+depends=('gcc' 'gcc-libs' 'glibc')
+provides=('cuda=13.2')
+options=('!strip' '!debug')
+
+source=('sources.lock')
+sha256sums=('0bfa930ab3b0649459fd352b82bc1f9bd2128ed39e04e086b3e146a3a4a1e502')
+
+while IFS='|' read -r package version path digest; do
+  case "$package" in
+    ''|'#'*) continue ;;
+  esac
+  source+=("${path##*/}::https://repo.download.nvidia.com/jetson/common/${path}")
+  sha256sums+=("$digest")
+done < "$startdir/sources.lock"
+
+package() {
+  local package version path digest archive data_member
+
+  while IFS='|' read -r package version path digest; do
+    case "$package" in
+      ''|'#'*) continue ;;
+    esac
+
+    archive="$srcdir/${path##*/}"
+    data_member=$(bsdtar -tf "$archive" | sed -n '/^data\.tar/{p;q;}')
+    test -n "$data_member"
+    bsdtar -xOf "$archive" "$data_member" |
+      bsdtar --no-same-owner -xf - -C "$pkgdir"
+  done < "$srcdir/sources.lock"
+
+  ln -s cuda-13.2 "$pkgdir/usr/local/cuda"
+  ln -s cuda-13.2 "$pkgdir/usr/local/cuda-13"
+
+  install -Dm644 \
+    "$pkgdir/usr/share/doc/cuda-nvcc-13-2/copyright" \
+    "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+
+  test -x "$pkgdir/usr/local/cuda-13.2/bin/nvcc"
+  test -x "$pkgdir/usr/local/cuda-13.2/nvvm/bin/cicc"
+  test -f "$pkgdir/usr/local/cuda-13.2/targets/sbsa-linux/include/cuda_runtime.h"
+  test -L "$pkgdir/usr/local/cuda-13.2/targets/sbsa-linux/lib/libcudart.so"
+  test -L "$pkgdir/usr/local/cuda-13.2/targets/sbsa-linux/lib/libcublas.so"
+  test -f "$pkgdir/usr/local/cuda-13.2/targets/sbsa-linux/lib/libcudadevrt.a"
+  test -f "$pkgdir/usr/local/cuda-13.2/targets/sbsa-linux/lib/libcudart_static.a"
+  test -f "$pkgdir/usr/local/cuda-13.2/targets/sbsa-linux/lib/libcublas_static.a"
+  test -f "$pkgdir/usr/local/cuda-13.2/targets/sbsa-linux/lib/libculibos.a"
+  test -L "$pkgdir/usr/local/cuda"
+  test -L "$pkgdir/usr/local/cuda-13"
+  test -f "$pkgdir/etc/ld.so.conf.d/000_cuda.conf"
+  test -f "$pkgdir/etc/ld.so.conf.d/987_cuda-13.conf"
+}

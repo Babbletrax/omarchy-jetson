@@ -1,0 +1,37 @@
+--- init.orig
++++ init
+@@ -33,6 +33,12 @@
+ count=0;
+ overlayfs_enabled=0
+ 
++exec 9>/initrd-trace.log
++export BASH_XTRACEFD=9
++export PS4='+ init:${LINENO}: '
++set -x
++echo "Omarchy Jetson initrd trace started" > /dev/kmsg
++
+ overlayfs_check() {
+ 	local efivar_dir="/sys/firmware/efi/efivars"
+ 	local prefix="L4TOverlayFsMode"
+@@ -825,6 +831,21 @@
+ mount -o bind /dev/ /mnt/dev;
+ cd /mnt;
+ 
++trace_dir="var/log/omarchy-jetson-boot"
++mkdir -p "${trace_dir}"
++cp /initrd-trace.log "${trace_dir}/nvidia-initrd-xtrace.log"
++dmesg > "${trace_dir}/nvidia-initrd-kernel.log" 2>&1
++{
++	echo "rootdev=${rootdev}"
++	echo "cmdline=$(cat /proc/cmdline)"
++	echo "root directory:"
++	ls -la .
++	echo "root init:"
++	ls -la sbin/init usr/lib/systemd/systemd
++} > "${trace_dir}/nvidia-initrd-handoff.log" 2>&1
++/bin/busybox sync
++echo "Omarchy Jetson initrd trace persisted" > /dev/kmsg
++
+ echo "Switching from initrd to actual rootfs" > /dev/kmsg;
+ mount --no-mtab --move . /
+ exec chroot . /sbin/init 2;

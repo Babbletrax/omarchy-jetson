@@ -1,0 +1,13 @@
+-- Displays (stock Omarchy layout). List screens and modes: hyprctl monitors all
+-- Every screen gets its preferred (native) mode at a scale Hyprland picks from
+-- its size and resolution. SUPER + / and SUPER + ALT + / step the scale and
+-- rewrite the scale value on the catch-all line below, so keep its exact shape.
+--
+-- Per-screen overrides go ABOVE the catch-all and match by EDID name, e.g. a TV
+-- whose EDID-preferred mode is a slow 24 Hz one:
+--   hl.monitor({ output = "desc:<make model serial>", mode = "3840x2160@60",
+--                position = "auto", scale = 2 })
+-- Add `reserved = { top = 10, right = 13, bottom = 10, left = 10 }` for a TV
+-- that crops its edges (overscan). A per-screen rule wins over the catch-all,
+-- so SUPER + / then scales that screen live but saves into the catch-all line.
+hl.monitor({ output = "", mode = "preferred", position = "auto", scale = "auto" })

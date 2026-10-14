@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+# Virtual keyboard and pointer for this build.
+#
+# The Comet KVM delivers HID over USB and that link has proven unstable on this
+# board, so input must not depend on it. The Tegra kernel ships no uinput
+# module either, which rules ydotool out entirely. Everything here talks to the
+# compositor directly:
+#
+#   keyboard  wtype, via virtual-keyboard-v1
+#   pointer   wlrctl, via wlr-virtual-pointer
+#   cursor    Hyprland's own dispatcher, which positions absolutely
+#
+# Hyprland 0.56 parses its config in Lua, so the cursor dispatcher takes a
+# named table and the legacy `hyprctl dispatch movecursor X Y` form is refused.
+
+readonly runtime=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+
+die() { printf 'omarchy-jetson-input: %s\n' "$*" >&2; exit 1; }
+
+session_env() {
+  export XDG_RUNTIME_DIR="$runtime"
+  [[ -n ${WAYLAND_DISPLAY:-} ]] ||
+    WAYLAND_DISPLAY=$(find "$runtime" -maxdepth 1 -name 'wayland-[0-9]*' -printf '%f\n' 2>/dev/null | sort | head -1)
+  export WAYLAND_DISPLAY
+  [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]] ||
+    HYPRLAND_INSTANCE_SIGNATURE=$(find "$runtime/hypr" -mindepth 1 -maxdepth 1 -printf '%f\n' 2>/dev/null | head -1)
+  export HYPRLAND_INSTANCE_SIGNATURE
+  [[ -n $WAYLAND_DISPLAY ]] || die 'no Wayland session found'
+}
+
+need() { command -v "$1" >/dev/null 2>&1 || die "$1 is not installed"; }
+
+# wtype takes each modifier as -M and releases it with -m, so a combo like
+# super+shift+q becomes -M logo -M shift -k q -m shift -m logo.
+send_key() {
+  local combo=${1:?key combo required} key part
+  need wtype
+  local -a press=() release=()
+  IFS='+' read -r -a parts <<<"$combo"
+  key=${parts[-1]}
+  unset 'parts[-1]'
+  for part in "${parts[@]}"; do
+    case ${part,,} in
+      super | meta | win | logo) part="logo" ;;
+      ctrl | control) part="ctrl" ;;
+      alt) part="alt" ;;
+      shift) part="shift" ;;
+      *) die "unknown modifier: $part" ;;
+    esac
+    press+=(-M "$part")
+    release=(-m "$part" "${release[@]}")
+  done
+  wtype "${press[@]}" -k "$key" "${release[@]}"
+}
+
+cursor_move() {
+  local x=${1:?x required} y=${2:?y required} script
+  need hyprctl
+  script=$(mktemp); trap 'rm -f "$script"' RETURN
+  printf 'hl.dispatch(hl.dsp.cursor.move({ x = %d, y = %d }))\n' "$x" "$y" >"$script"
+  hyprctl eval "dofile(\"$script\")" >/dev/null 2>&1 ||
+    die 'cursor move failed; is Hyprland running?'
+}
+
+session_env
+case ${1:-help} in
+  key)    shift; send_key "${1:?usage: key <combo>}" ;;
+  type)   shift; need wtype; wtype -- "${*:?usage: type <text>}" ;;
+  move)   shift; cursor_move "${1:?}" "${2:?}" ;;
+  click)  shift; need wlrctl; wlrctl pointer click "${1:-left}" ;;
+  scroll) shift; need wlrctl; wlrctl pointer scroll "${1:-5}" "${2:-0}" ;;
+  at)     shift  # move then click, the common case
+          cursor_move "${1:?}" "${2:?}"; sleep 0.3
+          need wlrctl; wlrctl pointer click "${3:-left}" ;;
+  pos)    need hyprctl; hyprctl cursorpos ;;
+  check)
+    printf 'wayland    : %s\n' "${WAYLAND_DISPLAY:-none}"
+    printf 'hyprland   : %s\n' "${HYPRLAND_INSTANCE_SIGNATURE:-none}"
+    for t in wtype wlrctl hyprctl; do
+      printf '%-11s: %s\n' "$t" "$(command -v $t || echo MISSING)"
+    done
+    printf 'cursor     : %s\n' "$(hyprctl cursorpos 2>/dev/null || echo unavailable)" ;;
+  *)
+    cat >&2 <<'USAGE'
+Usage: omarchy-jetson-input <command>
+
+  key <combo>          super+space, ctrl+alt+t, Escape
+  type <text>          type a literal string
+  move <x> <y>         position the cursor absolutely
+  click [button]       left (default), right, middle
+  at <x> <y> [button]  move then click
+  scroll <dy> [dx]     scroll wheel
+  pos                  print the cursor position
+  check                report which mechanisms are available
+
+None of these use USB HID, so they work while the KVM is disconnected.
+USAGE
+    exit 2 ;;
+esac
