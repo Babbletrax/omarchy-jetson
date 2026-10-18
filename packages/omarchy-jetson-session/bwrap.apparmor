@@ -1,0 +1,12 @@
+# Let bubblewrap create its sandbox (user namespace). The Ubuntu-derived Jetson
+# kernel sets kernel.apparmor_restrict_unprivileged_userns=1; without this, glycin
+# image loaders (GTK file chooser / xdg-desktop-portal-gtk) crash and downloads fail.
+abi <abi/4.0>,
+
+include <tunables/global>
+
+profile bwrap /usr/bin/bwrap flags=(unconfined) {
+  userns,
+
+  include if exists <local/bwrap>
+}

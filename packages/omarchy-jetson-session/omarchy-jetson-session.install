@@ -1,7 +1,15 @@
+_load_apparmor() {
+  if command -v apparmor_parser >/dev/null && [ -d /sys/kernel/security/apparmor ]; then
+    apparmor_parser -r /etc/apparmor.d/bwrap || true
+  fi
+}
+
 post_install() {
   systemctl enable greetd.service
+  _load_apparmor
 }
 
 post_upgrade() {
   systemctl enable greetd.service
+  _load_apparmor
 }

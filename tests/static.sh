@@ -284,6 +284,18 @@ else
   failures=$((failures + 1))
 fi
 
+bwrap_apparmor=packages/omarchy-jetson-session/bwrap.apparmor
+session_package=packages/omarchy-jetson-session/PKGBUILD
+if rg -Fq 'profile bwrap /usr/bin/bwrap flags=(unconfined)' "$bwrap_apparmor" &&
+   rg -Fq '  userns,' "$bwrap_apparmor" &&
+   rg -Fq '"$pkgdir/etc/apparmor.d/bwrap"' "$session_package" &&
+   rg -Fq 'apparmor_parser -r /etc/apparmor.d/bwrap' packages/omarchy-jetson-session/omarchy-jetson-session.install; then
+  printf 'PASS  bwrap may create user namespaces (GTK image loaders, file chooser)\n'
+else
+  printf 'FAIL  bwrap AppArmor userns profile is missing\n' >&2
+  failures=$((failures + 1))
+fi
+
 headers_package=packages/linux-jetson-headers/PKGBUILD
 if ! rg -Fq "'SKIP'" "$headers_package" &&
    rg -Fq "arch=('aarch64')" "$headers_package" &&
