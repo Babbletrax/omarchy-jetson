@@ -26,6 +26,7 @@ pipewire
 pipewire-pulse
 quickshell
 slurp
+tensaku
 socat
 swayidle
 swaylock
