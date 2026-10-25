@@ -52,14 +52,22 @@ push() {
 
 # Publishing gate: what goes to the public side is scanned first.
 # Every commit in the range is scanned, not just the tip: history is
-# published too, so something added and later removed still counts.
+# published too, so something added and later removed still counts. Each
+# commit is held to today's rules: the scanners and their allow lists come
+# from the tip being published, not from the (possibly older) commit.
+scanners=(tests/public-hygiene.sh tests/public-hygiene.allow tests/no-hardcoded-config.py tests/no-hardcoded-config.allow)
 gate() {
-  local from=$1 to=$2 tree range c
+  local from=$1 to=$2 tree range c f
   if [[ -n $from ]]; then range="$from..$to"; else range=$to; fi
   while read -r c; do
     # A fresh directory per commit, inside $work (removed on exit).
     tree=$(mktemp -d "$work/tree.XXXXXX")
     g --work-tree="$tree" checkout -q "$c" -- .
+    mkdir -p "$tree/tests"
+    for f in "${scanners[@]}"; do
+      g show "$to:$f" >"$tree/$f" 2>/dev/null || rm -f "$tree/$f"
+    done
+    chmod +x "$tree"/tests/*.sh "$tree"/tests/*.py 2>/dev/null || true
     (cd "$tree" && ./tests/public-hygiene.sh && ./tests/no-hardcoded-config.py) >/dev/null 2>&1 ||
       {
         say "hygiene failed on commit $c: not publishing"

@@ -24,6 +24,11 @@ git init -q --bare -b main "$fx/public.git"
 git init -q -b main "$fx/w"
 # Seed with this repository's working tree, so the real hygiene scans run.
 (cd "$repo_root" && git -c safe.directory="$repo_root" ls-files -z --cached --others --exclude-standard | tar --null -T - -c) | tar -x -C "$fx/w"
+# The first commit predates a scanner (as real early history does); it must be
+# judged by the tip's scanners, not fail for lacking one.
+mv "$fx/w/tests/no-hardcoded-config.py" "$fx/scanner.py"
+git -C "$fx/w" add -A && git -C "$fx/w" commit -qm 'seed without the newer scanner'
+mv "$fx/scanner.py" "$fx/w/tests/no-hardcoded-config.py"
 git -C "$fx/w" add -A && git -C "$fx/w" commit -qm seed
 git -C "$fx/w" push -q "$fx/primary.git" main
 
