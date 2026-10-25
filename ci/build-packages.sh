@@ -81,6 +81,14 @@ repo-add -q "$localrepo/ci-local.db.tar.gz" >/dev/null 2>&1 || true
 if ! grep -q '^\[ci-local\]' /etc/pacman.conf; then
   printf '\n[ci-local]\nSigLevel = Never\nServer = file://%s\n' "$localrepo" >>/etc/pacman.conf
 fi
+# This repository's packages are rebuilt every run with unchanged versions, so a
+# copy left in a pacman cache shared across jobs would be served instead of the
+# fresh build and fail its checksum. Drop cached copies of our own packages.
+cachedir=$(pacman-conf CacheDir | head -1)
+for name in "${!dir_of[@]}"; do
+  rm -f -- "$cachedir/$name"-[0-9]*.pkg.tar.* "$cachedir/$name"-[0-9]*.pkg.tar.*.sig
+done
+
 # One full sync up front, retried: a stalled mirror shouldn't fail the build.
 for attempt in 1 2 3; do
   pacman -Sy >/dev/null && break
