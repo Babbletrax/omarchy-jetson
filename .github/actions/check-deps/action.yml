@@ -16,7 +16,7 @@ runs:
       run: |
         sudo apt-get update -qq
         sudo apt-get install -y -qq --no-install-recommends \
-          jq ripgrep python3 file xz-utils rsync gpg gpgv libarchive-tools zstd
+          jq ripgrep python3 python-is-python3 file xz-utils rsync gpg gpg-agent gpgv libarchive-tools zstd
 
     - name: Install ShellCheck (pinned release)
       shell: bash

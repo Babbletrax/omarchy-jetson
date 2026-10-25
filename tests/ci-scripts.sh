@@ -62,6 +62,10 @@ gen_key() { # home name
 }
 fpr_a=$(gen_key "$work/a" signer-a)
 fpr_b=$(gen_key "$work/b" signer-b)
+if [[ -z $fpr_a || -z $fpr_b ]]; then
+  fail 'could not generate throwaway signing keys (is gpg-agent installed?)'
+  exit 1
+fi
 GNUPGHOME=$work/a gpg --batch --armor --export >"$work/a.asc" 2>/dev/null
 GNUPGHOME=$work/b gpg --batch --armor --export >"$work/b.asc" 2>/dev/null
 cat "$work/a.asc" "$work/b.asc" >"$work/both.asc"
