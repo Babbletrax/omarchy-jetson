@@ -1,0 +1,504 @@
+#!/usr/bin/env bash
+# Kernel safety net for Omarchy Jetson: keep a copy of the kernel that is
+# running now, and a boot-menu entry that starts it, before pacman replaces the
+# kernel, its initrd or NVIDIA's out-of-tree modules.
+#
+#   omarchy-jetson-kernel backup            pacman PreTransaction hook
+#                                           (10-omarchy-jetson-kernel-backup.hook)
+#   omarchy-jetson-kernel status            what runs, what is saved, is it current
+#   omarchy-jetson-kernel verify            check /boot/last-good against its SHA256SUMS
+#   omarchy-jetson-kernel restore-modules   early boot, last-good boots only
+#                                           (omarchy-jetson-kernel-modules.service)
+#   omarchy-jetson-kernel release-modules   undo restore-modules (before a kernel
+#                                           update while running last-good)
+#   omarchy-jetson-kernel allow-unprotected let the next kernel transaction run
+#                                           although no backup could be taken
+#
+# The boot chain is UEFI -> L4TLauncher -> /boot/extlinux/extlinux.conf on the
+# NVMe root. backup copies the DEFAULT entry's kernel and initrd (and its FDT,
+# if it has one; otherwise the firmware supplies the device tree) plus the
+# whole /usr/lib/modules/<version> tree, which holds NVIDIA's out-of-tree
+# modules under updates/, into /boot/last-good. It then keeps a managed
+# "LABEL last-good" entry in extlinux.conf with the DEFAULT entry's APPEND line
+# plus omarchy_jetson.last_good=1. DEFAULT and every other entry are never
+# changed.
+#
+# Only the kernel that is installed AND running, and was installed before this
+# boot started, is saved: an untested kernel never becomes last-good. Nothing
+# here restores automatically; picking last-good in the boot menu is manual.
+#
+# OMARCHY_JETSON_ROOT runs everything against another root (tests use a fixture
+# tree). Paths written into extlinux.conf are always relative to that root.
+set -Eeuo pipefail
+
+root=${OMARCHY_JETSON_ROOT:-}
+root=${root%/}
+boot=$root/boot
+extlinux=$boot/extlinux/extlinux.conf
+lg=$boot/last-good
+lg_tmp=$boot/last-good.tmp
+modules_dir=$root/usr/lib/modules
+run_dir=$root/run/omarchy-jetson-kernel
+allow_flag=$run_dir/allow-unprotected
+margin_kib=${OMARCHY_JETSON_KERNEL_MARGIN_KIB:-65536}
+keep_conf_backups=5
+
+kernel_pkg=linux-jetson
+marker=omarchy_jetson.last_good=1
+begin='# >>> omarchy-jetson last-good (managed by omarchy-jetson-kernel; do not edit) >>>'
+end='# <<< omarchy-jetson last-good <<<'
+
+# Temporary files removed on any exit.
+cleanup=()
+trap 'rm -f -- "${cleanup[@]}"' EXIT
+
+log() { printf 'omarchy-jetson-kernel: %s\n' "$*" >&2; }
+die() {
+  log "ERROR: $*"
+  exit 1
+}
+
+unprefix() { printf '%s\n' "${1#"$root"}"; }
+
+booted_last_good() {
+  [[ -r $root/proc/cmdline ]] && tr ' ' '\n' <"$root/proc/cmdline" | grep -qxF -- "$marker"
+}
+
+boot_time() { awk '$1 == "btime" { print $2 }' "$root/proc/stat" 2>/dev/null; }
+
+modules_mounted() { # version
+  [[ -r $root/proc/mounts ]] && awk -v p="$modules_dir/$1" '$2 == p { f = 1 } END { exit !f }' "$root/proc/mounts"
+}
+
+# Running in an image build (chroot or container) rather than on the board.
+not_on_board() {
+  command -v systemd-detect-virt >/dev/null 2>&1 || return 1
+  systemd-detect-virt --quiet --chroot || systemd-detect-virt --quiet --container
+}
+
+# Resolve a path from extlinux.conf (absolute within the root) to the file it
+# names under the root, following symlinks without leaving the root.
+resolve() { # path
+  local p=$root$1 t n=0
+  while [[ -L $p ]]; do
+    ((n++ < 20)) || return 1
+    t=$(readlink -- "$p")
+    if [[ $t == /* ]]; then p=$root$t; else p=$(dirname -- "$p")/$t; fi
+  done
+  [[ -f $p ]] || return 1
+  realpath -- "$p"
+}
+
+# ---------------------------------------------------------------------------
+# extlinux.conf parsing. Succeeds only for a file this script understands:
+# exactly one DEFAULT naming an existing LABEL whose entry has one absolute
+# LINUX, INITRD and APPEND (and at most one FDT, no FDTDIR/OVERLAYS), unique
+# labels, known directives only, Unix line endings, and at most one complete
+# managed block. Prints key=value lines; otherwise prints why and fails.
+parse_extlinux() { # file
+  [[ -f $1 && -r $1 ]] || {
+    printf '%s is missing or unreadable\n' "${1#"$root"}" >&2
+    return 1
+  }
+  awk -v b="$begin" -v e="$end" -v marker="$marker" '
+    function bad(msg) { if (err == "") err = "line " NR ": " msg }
+    function badall(msg) { if (err == "") err = msg }
+    {
+      line = $0
+      if (index(line, "\r")) { bad("carriage return (DOS line endings)"); next }
+      if (line == b) { if (inblock || blocks) bad("second managed block"); inblock = 1; blocks++; next }
+      if (line == e) { if (!inblock) bad("managed block end without its start"); inblock = 0; next }
+      if (inblock) next
+      if (line ~ /^[ \t]*$/ || line ~ /^[ \t]*#/) next
+      key = toupper($1)
+      rest = line
+      sub(/^[ \t]*[^ \t]+[ \t]*/, "", rest)
+      sub(/[ \t]+$/, "", rest)
+      if (key == "DEFAULT") { ndefault++; if (NF != 2) bad("DEFAULT must name one label"); deflabel = $2; next }
+      if (key ~ /^(TIMEOUT|PROMPT|MENU|UI|SAY)$/) next
+      if (key == "LABEL") {
+        if (NF != 2) { bad("LABEL must be one word"); next }
+        label = $2
+        if (label in seen) bad("duplicate LABEL " label)
+        if (label == "last-good") bad("LABEL last-good outside the managed block")
+        seen[label] = 1
+        next
+      }
+      if (key ~ /^(LINUX|KERNEL|INITRD|APPEND|FDT|FDTDIR|DEVICETREE|OVERLAYS)$/) {
+        if (label == "") { bad(key " before any LABEL"); next }
+        k = key == "KERNEL" ? "LINUX" : key == "DEVICETREE" ? "FDT" : key
+        cnt[label, k]++
+        val[label, k] = rest
+        next
+      }
+      bad("unknown directive " $1)
+    }
+    END {
+      if (inblock) badall("the managed block is not closed")
+      d = deflabel
+      if (ndefault != 1) badall("expected exactly one DEFAULT line, found " ndefault + 0)
+      else if (d == "last-good") badall("DEFAULT is last-good")
+      else if (!(d in seen)) badall("DEFAULT " d " has no LABEL")
+      else {
+        if (cnt[d, "LINUX"] != 1) badall("entry " d " needs exactly one LINUX")
+        if (cnt[d, "INITRD"] != 1) badall("entry " d " needs exactly one INITRD")
+        if (cnt[d, "APPEND"] != 1) badall("entry " d " needs exactly one APPEND")
+        if (cnt[d, "FDT"] > 1) badall("entry " d " has more than one FDT")
+        if (cnt[d, "FDTDIR"] || cnt[d, "OVERLAYS"]) badall("entry " d " uses FDTDIR/OVERLAYS, which this tool does not handle")
+        if (val[d, "LINUX"] !~ /^\//) badall("entry " d ": LINUX is not an absolute path")
+        if (val[d, "INITRD"] !~ /^\//) badall("entry " d ": INITRD is not an absolute path")
+        if (cnt[d, "FDT"] && val[d, "FDT"] !~ /^\//) badall("entry " d ": FDT is not an absolute path")
+        if (index(" " val[d, "APPEND"] " ", " " marker " ")) badall("entry " d " already carries " marker)
+      }
+      if (err != "") { print err > "/dev/stderr"; exit 1 }
+      print "default=" d
+      print "linux=" val[d, "LINUX"]
+      print "initrd=" val[d, "INITRD"]
+      print "fdt=" val[d, "FDT"]
+      print "append=" val[d, "APPEND"]
+      print "managed=" blocks + 0
+    }' "$1"
+}
+
+# Loads parse_extlinux output into cfg_* variables.
+load_extlinux() { # file
+  local out k v
+  out=$(parse_extlinux "$1") || return 1
+  cfg_default='' cfg_linux='' cfg_initrd='' cfg_fdt='' cfg_append='' cfg_managed=0
+  while IFS='=' read -r k v; do
+    case $k in
+      default) cfg_default=$v ;;
+      linux) cfg_linux=$v ;;
+      initrd) cfg_initrd=$v ;;
+      fdt) cfg_fdt=$v ;;
+      append) cfg_append=$v ;;
+      managed) cfg_managed=$v ;;
+    esac
+  done <<<"$out"
+}
+
+render_block() { # version, has_fdt, append
+  printf '%s\n' "$begin" 'LABEL last-good'
+  printf '      MENU LABEL last-good: previous working kernel %s\n' "$1"
+  printf '      LINUX /boot/last-good/Image\n'
+  printf '      INITRD /boot/last-good/initrd\n'
+  [[ $2 == yes ]] && printf '      FDT /boot/last-good/dtb\n'
+  printf '      APPEND %s %s\n' "$3" "$marker"
+  printf '%s\n' "$end"
+}
+
+# The file without the managed block and without trailing blank lines: what
+# must stay byte-identical across an edit.
+unmanaged() { # file
+  awk -v b="$begin" -v e="$end" '
+    $0 == b { skip = 1; next }
+    skip && $0 == e { skip = 0; next }
+    skip { next }
+    { lines[++n] = $0 }
+    END { while (n > 0 && lines[n] ~ /^[ \t]*$/) n--; for (i = 1; i <= n; i++) print lines[i] }' "$1"
+}
+
+# Insert or update the managed last-good entry for the saved set in /boot/last-good.
+sync_entry() {
+  local ver has_fdt=no dir new block stamp
+  ver=$(<"$lg/VERSION")
+  [[ -f $lg/dtb ]] && has_fdt=yes
+  load_extlinux "$extlinux" || die "$(unprefix "$extlinux") could not be parsed; it was left untouched and no last-good entry was written."
+  local o_default=$cfg_default o_linux=$cfg_linux o_initrd=$cfg_initrd o_fdt=$cfg_fdt o_append=$cfg_append
+  dir=$(dirname -- "$extlinux")
+  new=$dir/.extlinux.conf.omarchy-jetson.$$
+  block=$dir/.extlinux.block.omarchy-jetson.$$
+  cleanup+=("$new" "$block")
+  render_block "$ver" "$has_fdt" "$cfg_append" >"$block"
+  if ((cfg_managed)); then
+    awk -v b="$begin" -v e="$end" -v bf="$block" '
+      $0 == b { while ((getline l < bf) > 0) print l; skip = 1; next }
+      skip && $0 == e { skip = 0; next }
+      !skip' "$extlinux" >"$new"
+  else
+    {
+      cat -- "$extlinux"
+      [[ -z $(tail -c 1 -- "$extlinux") ]] || printf '\n'
+      printf '\n'
+      cat -- "$block"
+    } >"$new"
+  fi
+
+  # The edit may change the managed block only.
+  if ! cmp -s <(unmanaged "$extlinux") <(unmanaged "$new") ||
+    ! load_extlinux "$new" ||
+    [[ $cfg_default != "$o_default" || $cfg_linux != "$o_linux" || $cfg_initrd != "$o_initrd" ||
+      $cfg_fdt != "$o_fdt" || $cfg_append != "$o_append" || $cfg_managed != 1 ]]; then
+    die "the edited extlinux.conf did not check out; the original was left untouched."
+  fi
+  rm -f -- "$block"
+  if cmp -s "$new" "$extlinux"; then
+    rm -f -- "$new"
+    log "boot entry last-good is current"
+    return 0
+  fi
+
+  stamp=$(date -u +%Y%m%dT%H%M%S.%NZ)
+  cp -p -- "$extlinux" "$extlinux.omarchy-jetson-$stamp.bak"
+  chmod --reference="$extlinux" -- "$new"
+  chown --reference="$extlinux" -- "$new" 2>/dev/null || true
+  sync -- "$new" "$extlinux.omarchy-jetson-$stamp.bak"
+  mv -f -- "$new" "$extlinux"
+  sync -- "$dir"
+  find "$dir" -maxdepth 1 -name 'extlinux.conf.omarchy-jetson-*.bak' | LC_ALL=C sort |
+    head -n "-$keep_conf_backups" | xargs -r rm -f --
+  log "boot entry last-good now starts $ver (previous file kept as $(unprefix "$extlinux.omarchy-jetson-$stamp.bak"))"
+}
+
+# ---------------------------------------------------------------------------
+# The set backup would save: sets src_image, src_initrd, src_fdt and
+# why_not when the running kernel cannot be confirmed as the installed one.
+locate_running() { # version
+  local ver=$1 btime changed
+  why_not=''
+  load_extlinux "$extlinux" || die "$(unprefix "$extlinux") could not be parsed, so no last-good entry can be kept. The update is stopped; fix the file or see docs/kernel-safety.md."
+  src_image=$(resolve "$cfg_linux") || die "DEFAULT entry $cfg_default: kernel $cfg_linux not found."
+  src_initrd=$(resolve "$cfg_initrd") || die "DEFAULT entry $cfg_default: initrd $cfg_initrd not found."
+  src_fdt=''
+  if [[ -n $cfg_fdt ]]; then
+    src_fdt=$(resolve "$cfg_fdt") || die "DEFAULT entry $cfg_default: FDT $cfg_fdt not found."
+  fi
+  if [[ $src_image != "$(realpath -m -- "$boot/Image-$ver")" ]]; then
+    why_not="the DEFAULT entry boots $(unprefix "$src_image"), not /boot/Image-$ver"
+  elif ! pacman -Qlq "$kernel_pkg" 2>/dev/null | grep -qxF "/boot/Image-$ver"; then
+    why_not="/boot/Image-$ver is not installed by $kernel_pkg"
+  elif [[ ! -d $modules_dir/$ver ]]; then
+    why_not="/usr/lib/modules/$ver is missing"
+  else
+    btime=$(boot_time)
+    [[ $btime =~ ^[0-9]+$ ]] || die "cannot read the boot time from /proc/stat."
+    changed=$(find "$src_image" "$src_initrd" ${src_fdt:+"$src_fdt"} "$modules_dir/$ver" \
+      -newerct "@$btime" -print -quit 2>/dev/null || true)
+    [[ -z $changed ]] || why_not="$(unprefix "$changed") changed after this boot started (a reboot is pending)"
+  fi
+}
+
+source_sums() { # version
+  (
+    printf '%s  Image\n' "$(sha256sum <"$src_image" | cut -d' ' -f1)"
+    printf '%s  initrd\n' "$(sha256sum <"$src_initrd" | cut -d' ' -f1)"
+    [[ -z $src_fdt ]] || printf '%s  dtb\n' "$(sha256sum <"$src_fdt" | cut -d' ' -f1)"
+    cd -- "$modules_dir/$1"
+    find . -type f -print0 | LC_ALL=C sort -z | xargs -0r sha256sum | sed "s|  \./|  modules/$1/|"
+  )
+}
+
+lg_valid() { [[ -s $lg/VERSION && -s $lg/SHA256SUMS ]] && (cd -- "$lg" && sha256sum --quiet --status -c SHA256SUMS); }
+
+do_backup() {
+  local ver need avail sums
+  ((EUID == 0)) || [[ -n $root ]] || die "backup must run as root (it runs from a pacman hook)."
+  ver=$(uname -r)
+
+  if not_on_board; then
+    log "running in a chroot or container; no kernel backup taken"
+    return 0
+  fi
+  if ! pacman -Qq "$kernel_pkg" >/dev/null 2>&1; then
+    log "$kernel_pkg is not installed; nothing to back up"
+    return 0
+  fi
+  if modules_mounted "$ver"; then
+    die "this boot runs the last-good kernel with its modules mounted over /usr/lib/modules/$ver. Run 'sudo omarchy-jetson-kernel release-modules', then repeat the update."
+  fi
+  if booted_last_good; then
+    log "running the last-good fallback; /boot/last-good is kept as it is"
+    return 0
+  fi
+  # Leftovers of an interrupted run: a half-copied set goes, and a set
+  # moved aside by the non-atomic swap fallback comes back.
+  [[ -e $lg_tmp ]] && rm -r -- "$lg_tmp"
+  [[ -d $lg.old && ! -e $lg ]] && mv -T -- "$lg.old" "$lg"
+  [[ -e $lg.old ]] && rm -r -- "$lg.old"
+
+  locate_running "$ver"
+  if [[ -n $why_not ]]; then
+    if lg_valid; then
+      log "not saving the running kernel: $why_not. Keeping last-good $(<"$lg/VERSION")."
+      sync_entry
+      return 0
+    fi
+    if [[ -e $allow_flag ]]; then
+      rm -f -- "$allow_flag"
+      log "WARNING: no last-good kernel exists and the running one cannot be saved ($why_not). Continuing UNPROTECTED because allow-unprotected was set."
+      return 0
+    fi
+    die "no last-good kernel exists and the running one cannot be saved: $why_not. The update is stopped. Reboot into the installed kernel and retry, or run 'sudo omarchy-jetson-kernel allow-unprotected' to go ahead without a backup."
+  fi
+
+  sums=$(source_sums "$ver") || die "cannot read the running kernel's files; /boot/last-good was left as it was and the update is stopped."
+  if [[ -s $lg/SHA256SUMS && $(<"$lg/VERSION") == "$ver" && $(<"$lg/SHA256SUMS") == "$sums" ]] && lg_valid; then
+    log "last-good already holds the running kernel $ver"
+    sync_entry
+    return 0
+  fi
+
+  need=$(du -sk -- "$src_image" "$src_initrd" ${src_fdt:+"$src_fdt"} "$modules_dir/$ver" | awk '{ s += $1 } END { print s + 0 }')
+  need=$((need + margin_kib))
+  avail=$(df --output=avail -k -- "$boot" | tail -n 1 | tr -d ' ')
+  [[ $avail =~ ^[0-9]+$ ]] || die "cannot read the free space on /boot."
+  if ((avail < need)); then
+    die "not enough free space for the kernel backup: need $((need / 1024)) MiB on /boot, $((avail / 1024)) MiB free. The update is stopped so it does not run unprotected; free some space and retry."
+  fi
+
+  log "saving the running kernel $ver to /boot/last-good"
+  mkdir -p -- "$lg_tmp/modules"
+  if ! {
+    cp --preserve=mode,timestamps -- "$src_image" "$lg_tmp/Image" &&
+      cp --preserve=mode,timestamps -- "$src_initrd" "$lg_tmp/initrd" &&
+      { [[ -z $src_fdt ]] || cp --preserve=mode,timestamps -- "$src_fdt" "$lg_tmp/dtb"; } &&
+      cp -a -- "$modules_dir/$ver" "$lg_tmp/modules/$ver"
+  }; then
+    rm -r -- "$lg_tmp"
+    die "copying the kernel failed; /boot/last-good was left as it was and the update is stopped."
+  fi
+  printf '%s\n' "$sums" >"$lg_tmp/SHA256SUMS"
+  printf '%s\n' "$ver" >"$lg_tmp/VERSION"
+  {
+    printf 'version=%s\n' "$ver"
+    printf 'created=%s\n' "$(date -Iseconds)"
+    printf 'image=%s\n' "$(unprefix "$src_image")"
+    printf 'initrd=%s\n' "$(unprefix "$src_initrd")"
+    if [[ -n $src_fdt ]]; then
+      printf 'fdt=%s\n' "$(unprefix "$src_fdt")"
+    else
+      printf 'fdt=none (the DEFAULT entry has no FDT line; the firmware supplies the device tree)\n'
+    fi
+    printf 'default_label=%s\n' "$cfg_default"
+    printf 'append=%s\n' "$cfg_append"
+    pacman -Q 2>/dev/null | awk '$1 ~ /^(linux-jetson.*|nvidia-jetson-.*)$/ { print "package=" $1 " " $2 }'
+  } >"$lg_tmp/MANIFEST"
+  sync
+  if ! (cd -- "$lg_tmp" && sha256sum --quiet --status -c SHA256SUMS); then
+    rm -r -- "$lg_tmp"
+    die "the copy in /boot/last-good.tmp does not match the running kernel; /boot/last-good was left as it was and the update is stopped."
+  fi
+
+  # Swap the new set in. With an existing set this is one atomic exchange, so
+  # /boot/last-good always holds a complete set.
+  if [[ -d $lg ]]; then
+    if mv --exchange -T -- "$lg_tmp" "$lg" 2>/dev/null; then
+      rm -r -- "$lg_tmp"
+    else
+      mv -T -- "$lg" "$lg.old" && mv -T -- "$lg_tmp" "$lg" && rm -r -- "$lg.old"
+    fi
+  else
+    mv -T -- "$lg_tmp" "$lg"
+  fi
+  sync
+  sync_entry
+}
+
+# ---------------------------------------------------------------------------
+do_restore_modules() {
+  local ver lgver src dst
+  ver=$(uname -r)
+  booted_last_good || return 0
+  [[ -s $lg/VERSION ]] || { log "booted last-good, but /boot/last-good holds no kernel"; return 0; }
+  lgver=$(<"$lg/VERSION")
+  [[ $lgver == "$ver" ]] || { log "booted last-good, but it holds $lgver, not the running $ver; modules left alone"; return 0; }
+  src=$lg/modules/$ver dst=$modules_dir/$ver
+  [[ -d $src ]] || { log "no saved modules for $ver"; return 0; }
+  modules_mounted "$ver" && return 0
+  [[ -L $dst ]] && { log "$(unprefix "$dst") is a symlink; modules left alone"; return 1; }
+  mkdir -p -- "$run_dir"
+  if [[ ! -e $dst ]]; then
+    mkdir -p -- "$dst"
+    : >"$run_dir/created-mountpoint"
+  fi
+  # Read-only, so nothing (pacman, depmod) can write into the saved copy.
+  mount --bind -o ro -- "$src" "$dst" || { log "could not mount the saved modules for $ver"; return 1; }
+  log "running last-good $ver with its saved modules mounted over $(unprefix "$dst")"
+}
+
+do_release_modules() {
+  local ver dst
+  ver=$(uname -r) dst=$modules_dir/$ver
+  if ! modules_mounted "$ver"; then
+    log "no saved modules are mounted"
+    return 0
+  fi
+  umount -- "$dst"
+  if [[ -e $run_dir/created-mountpoint ]]; then
+    rmdir -- "$dst" 2>/dev/null || true
+    rm -f -- "$run_dir/created-mountpoint"
+  fi
+  log "released the saved modules for $ver; a kernel update can run now"
+}
+
+do_verify() {
+  [[ -s $lg/VERSION ]] || die "no last-good kernel is saved."
+  if lg_valid; then
+    printf 'last-good %s matches its SHA256SUMS\n' "$(<"$lg/VERSION")"
+  else
+    die "/boot/last-good does not match its SHA256SUMS."
+  fi
+}
+
+do_status() {
+  local ver lgver='none' created='' current entry mods='not mounted'
+  ver=$(uname -r)
+  [[ -s $lg/VERSION ]] && lgver=$(<"$lg/VERSION")
+  [[ -s $lg/MANIFEST ]] && created=$(sed -n 's/^created=//p' "$lg/MANIFEST")
+  if load_extlinux "$extlinux" 2>/dev/null; then
+    ((cfg_managed)) && entry='present' || entry='missing'
+    entry+=" (DEFAULT is $cfg_default)"
+  else
+    entry='extlinux.conf could not be parsed'
+  fi
+  modules_mounted "$ver" && mods="saved modules mounted over /usr/lib/modules/$ver"
+
+  if [[ $lgver == none ]]; then
+    current='no (nothing saved yet)'
+  elif [[ $lgver != "$ver" ]]; then
+    current="no (last-good is $lgver, running $ver)"
+  elif booted_last_good; then
+    current='yes (running last-good itself)'
+  else
+    current=$(
+      locate_running "$ver" 2>/dev/null
+      if [[ -n $why_not ]]; then
+        printf 'unknown (%s)\n' "$why_not"
+      elif [[ ! -r $src_initrd || ! -r $lg/initrd || ! -r $src_image ]]; then
+        printf 'unknown (run with sudo to compare the files)\n'
+      elif [[ $(<"$lg/SHA256SUMS") == "$(source_sums "$ver")" ]] && lg_valid; then
+        printf 'yes\n'
+      else
+        printf 'no (the installed kernel differs from the saved one)\n'
+      fi
+    ) || current='unknown (the boot configuration could not be read)'
+  fi
+
+  printf 'running:        %s%s\n' "$ver" "$(booted_last_good && printf ' (booted from last-good)')"
+  printf 'installed:      %s\n' "$(pacman -Q "$kernel_pkg" 2>/dev/null || printf 'not installed')"
+  printf 'last-good:      %s%s\n' "$lgver" "${created:+ (saved $created)}"
+  printf 'backup current: %s\n' "$current"
+  printf 'boot entry:     %s\n' "$entry"
+  printf 'modules:        %s\n' "$mods"
+}
+
+do_allow_unprotected() {
+  ((EUID == 0)) || [[ -n $root ]] || die "run with sudo."
+  mkdir -p -- "$run_dir"
+  : >"$allow_flag"
+  log "the next kernel transaction may run without a backup (until reboot or one use)"
+}
+
+case ${1:-status} in
+  backup) do_backup ;;
+  status) do_status ;;
+  verify) do_verify ;;
+  restore-modules) do_restore_modules ;;
+  release-modules) do_release_modules ;;
+  allow-unprotected) do_allow_unprotected ;;
+  -h | --help | help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *)
+    printf 'Usage: omarchy-jetson-kernel backup|status|verify|restore-modules|release-modules|allow-unprotected\n' >&2
+    exit 2
+    ;;
+esac

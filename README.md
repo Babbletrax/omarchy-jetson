@@ -152,6 +152,13 @@ omarchy-jetson-update-settings --auto on      # or off
 omarchy-jetson-update-settings --time 04:30
 ```
 
+`omarchy-jetson-kernel-safety` saves the running kernel, its initrd and its
+module tree to `/boot/last-good` before any kernel or Jetson BSP update, and
+keeps a `last-good` entry in the boot menu that starts it. It never changes
+the default entry, and it stops the update if it cannot take the backup.
+Check it with `omarchy-jetson-kernel status`. There is no automatic restore
+yet; see [docs/kernel-safety.md](docs/kernel-safety.md).
+
 > **Kernel caution.** Never install `linux-aarch64` or generic NVIDIA, firmware
 > or bootloader packages on a Jetson. Never remove the `IgnorePkg` hold. The
 > board boots only with NVIDIA's matching kernel, DTB, modules and initrd. A
