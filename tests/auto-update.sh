@@ -66,6 +66,7 @@ export OMARCHY_JETSON_UPDATE_LOG=$fixture/auto-update.log
 export OMARCHY_JETSON_UPDATE_UNIT_DIR=$fixture/systemd
 export OMARCHY_JETSON_PACMAN_LOCK=$fixture/db.lck
 export OMARCHY_JETSON_PACMAN_CONF=$fixture/pacman.conf
+export OMARCHY_JETSON_KERNEL_BACKUP_HOOK=$fixture/no-kernel-backup.hook
 export OMARCHY_JETSON_UPSTREAM_LOCKS="$fixture/run/*/omarchy-update.lock"
 export XDG_STATE_HOME=$fixture/user-state
 export FAKE_UPDATES=$fixture/updates FAKE_SESSIONS=$fixture/sessions
@@ -215,7 +216,13 @@ for kernel_pkg in linux-jetson linux-jetson-headers nvidia-jetson-userspace; do
   expect_blocked "kernel/BSP pending ($kernel_pkg)" 'kernel/BSP update needs the user' drops-marker
   [[ $(head -n 1 "$notice") == kernel ]] || fail "$kernel_pkg: no kernel notice"
   grep -Fq "$kernel_pkg" "$notice" || fail "$kernel_pkg: notice does not name the package"
+  grep -Fq 'No kernel backup will be taken' "$notice" || fail "$kernel_pkg: notice hides the missing backup"
 done
+# With omarchy-jetson-kernel-safety installed, the notice says a backup is taken.
+touch "$fixture/kernel-backup.hook"
+printf 'linux-jetson 1-1 -> 2-1\n' >"$FAKE_UPDATES"
+OMARCHY_JETSON_KERNEL_BACKUP_HOOK=$fixture/kernel-backup.hook expect_blocked 'kernel/BSP pending, backup hook present' 'kernel/BSP update needs the user' drops-marker
+grep -Fq 'saved to /boot/last-good first' "$notice" || fail "notice does not mention the backup: $(<"$notice")"
 printf 'mesa 1.0-1 -> 1.1-1\nlinux-aarch64 6.1-1 -> 6.2-1\n' >"$FAKE_UPDATES"
 expect_blocked 'generic kernel no longer ignored' 'kernel/BSP update needs the user' drops-marker
 printf 'mesa 1.0-1 -> 1.1-1\n' >"$FAKE_UPDATES"
