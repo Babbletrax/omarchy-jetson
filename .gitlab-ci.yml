@@ -5,8 +5,9 @@
 # its image are the maintainer's own and are not part of this build.
 #
 # The `mirror` job (scheduled) keeps GitLab and GitHub in step in both
-# directions, fast-forward only (ci/mirror-sync.sh). It needs the CI variables
-# MIRROR_PRIMARY_URL and MIRROR_PUBLIC_URL (masked, protected; URLs with tokens).
+# directions, fast-forward only (ci/mirror-sync.sh). It needs masked, protected
+# CI variables GITLAB_PUSH_TOKEN (a project access token with write_repository)
+# and GITHUB_PUSH_TOKEN, plus MIRROR_PUBLIC_REPO (owner/name on GitHub).
 
 workflow:
   rules:
@@ -140,8 +141,12 @@ mirror:
   stage: publish
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule" && $SCHEDULE == "mirror"
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $MIRROR_PUBLIC_URL
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $GITHUB_PUSH_TOKEN
   interruptible: false
   resource_group: mirror
   script:
-    - ci/mirror-sync.sh "$MIRROR_PRIMARY_URL" "$MIRROR_PUBLIC_URL" "$CI_DEFAULT_BRANCH"
+    - >-
+      ci/mirror-sync.sh
+      "https://oauth2:${GITLAB_PUSH_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"
+      "https://x-access-token:${GITHUB_PUSH_TOKEN}@github.com/${MIRROR_PUBLIC_REPO}.git"
+      "$CI_DEFAULT_BRANCH"
