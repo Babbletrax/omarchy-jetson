@@ -23,4 +23,5 @@ check:
 	./tests/observability.sh
 	./tests/notifications.sh
 	./tests/bar-control.sh
+	./tests/tests-required.sh
 	./tests/ci-scripts.sh
