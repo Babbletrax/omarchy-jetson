@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 readonly shell_root=${OMARCHY_PATH:-/usr/share/omarchy}
 readonly jetson_data=/usr/share/omarchy-jetson
+readonly agent_skills=$shell_root/default/agents/skills
 readonly jetson_bin=/usr/lib/omarchy-jetson/bin
 readonly shell_config=${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/shell.json
 readonly menu_extension=${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/extensions/omarchy-menu.jsonc
@@ -42,10 +43,36 @@ seed_file() {
   fi
 }
 
+# Link the agent skills (upstream's and the Jetson one beside them) into each
+# installed agent's skill dir, as upstream's provisioning does. Users set up
+# before a skill shipped never got its link. A real directory of the same
+# name is the user's own copy and is left alone.
+link_agent_skills() {
+  local skill name dir
+  for skill in "$agent_skills"/*/; do
+    [[ -d $skill ]] || continue
+    skill=${skill%/}
+    name=${skill##*/}
+    for dir in "$HOME/.agents/skills" "$HOME/.claude/skills" "$HOME/.codex/skills" \
+               "$HOME/.pi/agent/skills"; do
+      [[ -d ${dir%/skills} ]] || continue
+      if [[ -e $dir/$name && ! -L $dir/$name ]]; then
+        continue
+      fi
+      if [[ $(readlink "$dir/$name" 2>/dev/null) != "$skill" ]]; then
+        mkdir -p "$dir"
+        ln -sfn "$skill" "$dir/$name"
+        log "event=skill-linked name=$name path=$dir/$name"
+      fi
+    done
+  done
+}
+
 ensure_config() {
   seed_file "$jetson_data/default-shell.json" "$shell_config" config
   # The Jetson menu additions are merged by the shell over the upstream menu.
   seed_file "$jetson_data/default-menu-extension.jsonc" "$menu_extension" menu-extension
+  link_agent_skills
 }
 
 shell_ping() {

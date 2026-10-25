@@ -11,12 +11,15 @@ launcher="$repo_root/packages/omarchy-jetson-upstream/omarchy-jetson-shell"
 # so lift the function out and run it against a fixture tree.
 {
   sed -n '/^seed_file()/,/^}/p' "$launcher"
+  sed -n '/^link_agent_skills()/,/^}/p' "$launcher"
   sed -n '/^ensure_config()/,/^}/p' "$launcher"
 } >"$fixture_dir/seed.sh"
 [[ -s $fixture_dir/seed.sh ]]
 
 export OMARCHY_SEED_ROOT="$fixture_dir/root"
 export XDG_CONFIG_HOME="$fixture_dir/config"
+export HOME="$fixture_dir/home"
+mkdir -p "$HOME/.claude" "$OMARCHY_SEED_ROOT/skills/omarchy-jetson" "$OMARCHY_SEED_ROOT/skills/omarchy"
 mkdir -p "$OMARCHY_SEED_ROOT"
 printf '{}\n' >"$OMARCHY_SEED_ROOT/default-shell.json"
 
@@ -25,6 +28,7 @@ run_seed() {
     set -euo pipefail
     shell_root="$OMARCHY_SEED_ROOT"
     jetson_data="$OMARCHY_SEED_ROOT"
+    agent_skills="$OMARCHY_SEED_ROOT/skills"
     shell_config="$XDG_CONFIG_HOME/omarchy/shell.json"
     menu_extension="$XDG_CONFIG_HOME/omarchy/extensions/omarchy-menu.jsonc"
     log() { printf "%s\n" "$*"; }
@@ -79,4 +83,17 @@ out=$(run_seed)
 [[ $out == *event=config-kept-user-copy* ]]
 [[ $(<"$shell_target") == '{"mine":true}' ]]
 
-printf 'PASS  shell.json and menu extension seeding, upgrade refresh and user-edit preservation fixture\n'
+# Agent skills: linked into installed agents only (~/.claude exists, ~/.codex
+# doesn't), once; a user's own same-named directory is never replaced.
+[[ $(readlink "$HOME/.claude/skills/omarchy-jetson") == "$OMARCHY_SEED_ROOT/skills/omarchy-jetson" ]]
+[[ -L $HOME/.claude/skills/omarchy ]]
+[[ ! -e $HOME/.codex ]]
+out=$(run_seed)
+[[ $out != *skill-linked* ]]
+rm "$HOME/.claude/skills/omarchy"
+mkdir "$HOME/.claude/skills/omarchy"
+out=$(run_seed)
+[[ $out != *skill-linked* ]]
+[[ -d $HOME/.claude/skills/omarchy && ! -L $HOME/.claude/skills/omarchy ]]
+
+printf 'PASS  shell.json, menu extension and agent-skill seeding, upgrade refresh and user-edit preservation fixture\n'

@@ -2,7 +2,7 @@
 
 pkgname=omarchy-jetson-upstream
 pkgver=4.0.4
-pkgrel=4
+pkgrel=5
 pkgdesc='Jetson AGX Orin layer over upstream Omarchy: hardware overrides, managed shell service, PATH ordering'
 arch=('aarch64')
 url='https://github.com/omacom/omarchy'
@@ -36,6 +36,7 @@ source=(
   'omarchy-jetson.sh'
   "omarchy-v${pkgver}.tar.gz::https://github.com/omacom/omarchy/archive/refs/tags/v${pkgver}.tar.gz"
   "PROJECT-LICENSE::file://${startdir}/../../LICENSE"
+  "omarchy-jetson-SKILL.md::file://${startdir}/../../config/skills/omarchy-jetson/SKILL.md"
 )
 sha256sums=('02c553851142ba1a4f6bdc4a4cdfafd73818c03178b2de6d78831fcc5717824e'
             '382239e566260e24081400ed908a189cf0711ac7a61b828328aab1e8b162e1ec'
@@ -51,7 +52,8 @@ sha256sums=('02c553851142ba1a4f6bdc4a4cdfafd73818c03178b2de6d78831fcc5717824e'
             'a4119dfe8f3e2944d27165181eb7afae9d8b27b701450040a1b90d469b31020c'
             'bed63c8512acf5a68591dad37725f5465d7e0bb22533cc999fc66edd326faeff'
             'cd576f3ea0d1d87ed45dd3f34c7dfd42c982884ac15fe8bf5b858241254ec508'
-            '83cfe731d9126f1c55f3663e7c6e51e37267420bd92cfeafcb8ab96d2a9c12a2')
+            '83cfe731d9126f1c55f3663e7c6e51e37267420bd92cfeafcb8ab96d2a9c12a2'
+            '8114e09cda78cba4fc3d291bba48788afe8281b1743f561a3fdd2db13b2e187a')
 
 package() {
   local upstream="$srcdir/omarchy-$pkgver"
@@ -93,6 +95,11 @@ package() {
   install -Dm644 90-omarchy-jetson-qt612-shell-fix.hook \
     "$pkgdir/usr/share/libalpm/hooks/90-omarchy-jetson-qt612-shell-fix.hook"
   install -Dm644 omarchy-jetson.sh "$pkgdir/etc/profile.d/omarchy-jetson.sh"
+
+  # The Jetson agent skill sits beside upstream's own skills, so upstream's
+  # provisioning and omarchy-jetson-shell link it into every agent's skill dir.
+  install -Dm644 omarchy-jetson-SKILL.md \
+    "$pkgdir/usr/share/omarchy/default/agents/skills/omarchy-jetson/SKILL.md"
 
   install -Dm644 "$upstream/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/OMARCHY-LICENSE"
   install -Dm644 PROJECT-LICENSE "$pkgdir/usr/share/licenses/$pkgname/PROJECT-LICENSE"
