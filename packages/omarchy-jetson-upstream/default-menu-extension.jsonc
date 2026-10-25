@@ -5,7 +5,7 @@
   // action calls omarchy-* commands. Entries hide while their command is
   // absent and return once it is packaged, so the menu never shows an
   // action that cannot run. Regenerate when the Omarchy pin moves.
-  // upstream entries guarded: 268; Jetson additions: 7
+  // upstream entries guarded: 268; Jetson additions: 8
   "items": {
     "about": {
       "action": "omarchy-launch-about",
@@ -1603,6 +1603,13 @@
       "icon": "󰧸",
       "label": "Transcode",
       "when": "command -v omarchy-transcode >/dev/null"
+    },
+    "update.automatic": {
+      "action": "omarchy-launch-floating-terminal-with-presentation omarchy-jetson-update-settings",
+      "description": "Install updates by themselves when idle, and the daily check time",
+      "icon": "󰚰",
+      "label": "Automatic Updates",
+      "when": "command -v omarchy-jetson-update-settings"
     },
     "update.channel.dev": {
       "action": "omarchy-launch-floating-terminal-with-presentation 'omarchy-channel-set dev'",

@@ -1,0 +1,238 @@
+#!/usr/bin/env bash
+# Background system updates for Omarchy Jetson. Runs as root from systemd:
+#
+#   omarchy-jetson-auto-update check   daily (omarchy-jetson-update-check.timer)
+#   omarchy-jetson-auto-update apply   every 15 min (omarchy-jetson-auto-update.timer)
+#
+# check  lists pending updates against a private copy of the sync database
+#        (checkupdates), so the live database is never synced on its own and no
+#        partial upgrade can result, then pre-downloads them into the package
+#        cache. When automatic updates are switched on it leaves an
+#        auto-pending marker for apply.
+#
+# apply  acts only on that marker, and only when every gate holds: switched on,
+#        fully online, no pacman transaction or Omarchy update running, enough
+#        free space, every graphical session idle, a fresh check that
+#        succeeded, and no kernel/BSP package among the updates. It then runs
+#        the system-level steps of upstream's omarchy-update (keyring, cache
+#        prune, snapshot, omarchy-update-system-pkgs), never raw pacman, and
+#        never reboots. The per-user steps (migrations, mise, AUR, shell
+#        restart) are left to the user's own omarchy-update and upstream's
+#        omarchy-migrate-notify at login.
+#
+# Every outcome that needs the user's attention is written as a notice
+# (first line ok|failed|kernel, then the message) that the user unit
+# omarchy-jetson-update-notify turns into a desktop notification.
+set -Eeuo pipefail
+
+conf=${OMARCHY_JETSON_UPDATE_CONF:-/etc/omarchy-jetson/auto-update.conf}
+state=${OMARCHY_JETSON_UPDATE_STATE:-/var/lib/omarchy-jetson/updates}
+log_file=${OMARCHY_JETSON_UPDATE_LOG:-/var/log/omarchy-jetson-auto-update.log}
+pacman_lock=${OMARCHY_JETSON_PACMAN_LOCK:-/var/lib/pacman/db.lck}
+pacman_conf=${OMARCHY_JETSON_PACMAN_CONF:-/etc/pacman.conf}
+upstream_locks=${OMARCHY_JETSON_UPSTREAM_LOCKS:-/run/user/*/omarchy-update.lock /tmp/omarchy-update.lock}
+min_free_kib=${OMARCHY_JETSON_UPDATE_MIN_FREE_KIB:-$((2 * 1024 * 1024))}
+
+pending=$state/auto-pending
+list=$state/updates.txt
+notices=$state/notices
+notice=$notices/auto-update
+
+# Packages that must never be upgraded unattended: NVIDIA's kernel, initrd,
+# headers and BSP userspace, plus the generic kernel the IgnorePkg hold keeps
+# out. A match blocks the whole run, because upgrading everything else around a
+# held kernel is a partial upgrade.
+kernel_package_re='^(linux-jetson(-.*)?|nvidia-jetson-.*|linux-aarch64(-.*)?)$'
+held_packages=(linux-aarch64 linux-aarch64-headers)
+
+umask 022
+export CHECKUPDATES_DB=$state/checkup-db
+
+log() {
+  mkdir -p "$(dirname "$log_file")"
+  printf '%s %s\n' "$(date '+%F %T')" "$*" >>"$log_file"
+}
+
+write_notice() { # kind, message
+  mkdir -p "$notices"
+  printf '%s\n%s\n' "$1" "$2" >"$notice.tmp"
+  mv -f "$notice.tmp" "$notice"
+}
+
+enabled() { [[ -r $conf ]] && grep -qx 'enabled=yes' "$conf"; }
+
+# Names of packages in a checkupdates list that would be upgraded. pacman marks
+# IgnorePkg entries "[ignored]"; those stay held and are not ours to apply.
+upgradable() { awk 'NF && $NF != "[ignored]" { print $1 }' "${1:--}"; }
+
+# Hook point for the kernel-safety feature. Prints the kernel/BSP packages
+# among the pending updates and succeeds when there is at least one. Until a
+# guided kernel update exists, any match means the user has to do it.
+kernel_update_pending() { # list file
+  local found
+  found=$(upgradable "$1" | grep -E "$kernel_package_re" || true)
+  [[ -n $found ]] || return 1
+  printf '%s\n' "$found"
+}
+
+# The generic-kernel hold must still be in place, or pacman -Syu could pull
+# linux-aarch64 over NVIDIA's kernel.
+kernel_hold_present() {
+  local ignored pkg
+  ignored=$(pacman-conf --config "$pacman_conf" IgnorePkg 2>/dev/null) || return 1
+  for pkg in "${held_packages[@]}"; do
+    grep -qxF "$pkg" <<<"$ignored" || return 1
+  done
+}
+
+online() {
+  command -v nmcli >/dev/null 2>&1 || return 1
+  [[ $(nmcli -t -f CONNECTIVITY general 2>/dev/null) == full ]]
+}
+
+pacman_busy() { [[ -e $pacman_lock ]]; }
+
+# A user's interactive omarchy-update holds its lock in $XDG_RUNTIME_DIR.
+upstream_update_running() {
+  local lock
+  for lock in $upstream_locks; do
+    [[ -f $lock ]] || continue
+    flock -n "$lock" true 2>/dev/null || return 0
+  done
+  return 1
+}
+
+free_space_ok() {
+  local avail
+  avail=$(df --output=avail -k / 2>/dev/null | tail -n 1 | tr -d ' ')
+  [[ $avail =~ ^[0-9]+$ ]] && ((avail >= min_free_kib))
+}
+
+# Every graphical session (the greeter aside) must report IdleHint=yes, which
+# swayidle's idlehint sets after 15 minutes, or be locked. No session counts
+# as idle.
+sessions_idle() {
+  local id type class idle locked
+  while read -r id _; do
+    [[ -n $id ]] || continue
+    type=$(loginctl show-session "$id" -p Type --value 2>/dev/null || true)
+    [[ $type == wayland || $type == x11 || $type == mir ]] || continue
+    class=$(loginctl show-session "$id" -p Class --value 2>/dev/null || true)
+    [[ $class == greeter ]] && continue
+    idle=$(loginctl show-session "$id" -p IdleHint --value 2>/dev/null || true)
+    locked=$(loginctl show-session "$id" -p LockedHint --value 2>/dev/null || true)
+    [[ $idle == yes || $locked == yes ]] || return 1
+  done < <(loginctl list-sessions --no-legend 2>/dev/null || true)
+  return 0
+}
+
+# checkupdates exits 0 with updates, 2 with none and 1 when it could not check.
+# Prints the status and leaves the list in $list.
+refresh_list() {
+  local out rc=0
+  mkdir -p "$state"
+  out=$(checkupdates --nocolor 2>/dev/null) || rc=$?
+  case $rc in
+    0 | 2)
+      ((rc == 0)) || out=
+      printf '%s' "${out:+$out$'\n'}" >"$list.tmp"
+      mv -f "$list.tmp" "$list"
+      ;;
+  esac
+  return "$rc"
+}
+
+do_check() {
+  if pacman_busy; then
+    log 'check: skipped, a pacman transaction is running'
+    return 0
+  fi
+  local rc=0
+  refresh_list || rc=$?
+  case $rc in
+    0)
+      checkupdates --nosync --download >/dev/null 2>&1 || log 'check: pre-download failed; apply will download'
+      log "check: $(upgradable "$list" | wc -l) update(s) pending"
+      ;;
+    2) log 'check: up to date' ;;
+    *) log 'check: could not reach the package servers' ;;
+  esac
+  # Offline checks still hand over, so apply retries once the network is back.
+  if enabled && { ((rc == 1)) || [[ -n $(upgradable "$list" 2>/dev/null) ]]; }; then
+    touch "$pending"
+  fi
+  return 0
+}
+
+# The system half of upstream's omarchy-update, in its order, under upstream's
+# update lock. omarchy-update-system-pkgs sets OMARCHY_UPDATE_PACMAN=1, which is
+# what 00-omarchy-update-guard.hook accepts, and OMARCHY_UPDATE_UNATTENDED=1
+# makes its conflict handler give up instead of waiting on a prompt.
+run_upstream_update() {
+  export OMARCHY_PATH=${OMARCHY_PATH:-/usr/share/omarchy} OMARCHY_UPDATE_UNATTENDED=1
+  omarchy-update-pkg-prune
+  omarchy-snapshot create || (($? == 127)) || echo 'Continuing the update without a snapshot.' >&2
+  omarchy-update-keyring
+  omarchy-update-system-pkgs
+}
+
+do_apply() {
+  [[ -f $pending ]] || return 0
+  if ! enabled; then
+    rm -f "$pending"
+    return 0
+  fi
+  online || { log 'waiting: not fully online'; return 0; }
+  pacman_busy && { log 'waiting: a pacman transaction is running'; return 0; }
+  upstream_update_running && { log 'waiting: an Omarchy update is running'; return 0; }
+  free_space_ok || { log "waiting: less than $((min_free_kib / 1024 / 1024)) GiB free on /"; return 0; }
+  sessions_idle || { log 'waiting: a desktop session is in use'; return 0; }
+
+  local rc=0 kernel names count
+  refresh_list || rc=$?
+  if ((rc == 1)); then
+    log 'waiting: could not reach the package servers'
+    return 0
+  fi
+  names=$(upgradable "$list")
+  if [[ -z $names ]]; then
+    rm -f "$pending"
+    log 'nothing to install'
+    return 0
+  fi
+
+  if ! kernel_hold_present; then
+    rm -f "$pending"
+    log "blocked: IgnorePkg no longer holds ${held_packages[*]}"
+    write_notice kernel "Automatic updates are paused: /etc/pacman.conf no longer holds ${held_packages[*]} with IgnorePkg. Restore the hold, then update with omarchy-update."
+    return 0
+  fi
+  if kernel=$(kernel_update_pending "$list"); then
+    rm -f "$pending"
+    log "blocked: kernel/BSP update needs the user: $(tr '\n' ' ' <<<"$kernel")"
+    write_notice kernel "A kernel or Jetson BSP update is waiting and will not install by itself: $(paste -sd' ' <<<"$kernel"). Update by hand when you can check the board afterwards."
+    return 0
+  fi
+
+  count=$(wc -l <<<"$names")
+  log "installing $count update(s) through upstream omarchy-update steps"
+  if omarchy-update-lock run "$0" __locked-apply >>"$log_file" 2>&1; then
+    rm -f "$pending"
+    : >"$list"
+    log "done: $count update(s) installed"
+    write_notice ok "$count update(s) were installed automatically at $(date '+%F %H:%M'). Nothing was restarted. Run Update > Omarchy for migrations and restarts."
+  else
+    log 'failed; will retry'
+    write_notice failed "An automatic update did not finish and will be retried. Details: $log_file"
+  fi
+}
+
+case ${1:-} in
+  check) do_check ;;
+  apply) do_apply ;;
+  __locked-apply) run_upstream_update ;;
+  *)
+    printf 'Usage: omarchy-jetson-auto-update check|apply\n' >&2
+    exit 2
+    ;;
+esac

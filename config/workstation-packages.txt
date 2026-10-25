@@ -48,3 +48,4 @@ xdg-terminal-exec
 xdg-user-dirs
 xorg-xwayland
 zram-generator
+omarchy-jetson-updates

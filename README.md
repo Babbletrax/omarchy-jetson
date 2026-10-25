@@ -87,7 +87,8 @@ Upstream Omarchy targets x86_64 PCs. On the Jetson the following are different.
   terminal launcher, screen recording and the screensaver effect picker.
 - **Menu additions.** Jetson entries are added through upstream's menu extension
   point rather than a fork. Those entries are *Style → Scale and fonts*,
-  *Style → Display*, the screensaver effect, and *Setup → Jetson Power Mode*.
+  *Style → Display*, the screensaver effect, *Setup → Jetson Power Mode* and
+  *Update → Automatic Updates*.
   Upstream entries whose commands are not packaged on AArch64 are hidden
   automatically.
 - **Applications.** Upstream's preinstalled x86 application and web-app bundle
@@ -135,6 +136,21 @@ omarchy-update
 ```
 
 Upstream's guard blocks a plain `pacman -Syu`.
+
+`omarchy-jetson-updates` adds opt-in automatic updates, off by default. A
+daily timer (03:00 unless changed) checks against a private copy of the package
+database and pre-downloads. When switched on, the updates install once the
+board is online and idle, with enough free space and no other update running,
+through the system steps of upstream's `omarchy-update`. The board never
+reboots by itself, and kernel or Jetson BSP updates (`linux-jetson*`,
+`nvidia-jetson-*`) are never applied automatically; a notification asks you to
+run them. Change the settings under *Update → Automatic Updates* or with:
+
+```sh
+omarchy-jetson-update-settings --show
+omarchy-jetson-update-settings --auto on      # or off
+omarchy-jetson-update-settings --time 04:30
+```
 
 > **Kernel caution.** Never install `linux-aarch64` or generic NVIDIA, firmware
 > or bootloader packages on a Jetson. Never remove the `IgnorePkg` hold. The

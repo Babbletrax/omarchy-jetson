@@ -1,0 +1,11 @@
+[Unit]
+Description=Omarchy Jetson: notify when an automatic update leaves a notice
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Path]
+PathChanged=/var/lib/omarchy-jetson/updates/notices/auto-update
+Unit=omarchy-jetson-update-notify.service
+
+[Install]
+WantedBy=graphical-session.target
