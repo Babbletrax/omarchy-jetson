@@ -123,6 +123,10 @@ There is no one-click image yet. The current path is as follows.
 5. Put the module in Force Recovery and flash to NVMe as described in
    [docs/flash-recovery.md](docs/flash-recovery.md).
    [docs/recovery.md](docs/recovery.md) covers getting back to a working system.
+6. On first boot, a text-mode setup on the TV console creates your account,
+   offers `omarchy-jetson` as the hostname (change it if you like), connects
+   Wi-Fi and sets the timezone before the login screen appears. See
+   [docs/onboarding.md](docs/onboarding.md).
 
 Every downloaded input is pinned by SHA-256, and signatures are verified where
 the publisher provides them.
