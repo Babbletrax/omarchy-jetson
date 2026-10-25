@@ -369,7 +369,7 @@ rm -r -- "$R/usr/lib/modules/$V"
 run restore-modules || fail "restore with modules missing failed: $(err)"
 [[ -d $R/usr/lib/modules/$V ]] || fail 'no mountpoint created'
 grep -Fxq "mount --bind -o ro -- $lg/modules/$V $R/usr/lib/modules/$V" "$CALLS" || fail "mount call: $(<"$CALLS")"
-"$tool" status | grep -Fq 'saved modules mounted' || fail 'status does not report the mount'
+"$tool" status | grep -F 'saved modules mounted' >/dev/null || fail 'status does not report the mount'
 run release-modules || fail 'release failed'
 [[ ! -e $R/usr/lib/modules/$V ]] || fail 'release left the created mountpoint'
 

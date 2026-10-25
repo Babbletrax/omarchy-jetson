@@ -81,7 +81,17 @@ repo-add -q "$localrepo/ci-local.db.tar.gz" >/dev/null 2>&1 || true
 if ! grep -q '^\[ci-local\]' /etc/pacman.conf; then
   printf '\n[ci-local]\nSigLevel = Never\nServer = file://%s\n' "$localrepo" >>/etc/pacman.conf
 fi
-pacman -Sy >/dev/null
+# One full sync up front, retried: a stalled mirror shouldn't fail the build.
+for attempt in 1 2 3; do
+  pacman -Sy >/dev/null && break
+  ((attempt == 3)) && exit 1
+  sleep $((attempt * 20))
+done
+# After each build only the local repository changes; refresh just that
+# (pacman reads file:// databases straight into its sync directory).
+refresh_local() {
+  cp "$localrepo/ci-local.db.tar.gz" "$(pacman-conf DBPath)sync/ci-local.db"
+}
 
 # PKGBUILDs read files relative to $startdir (../../LICENSE, config/...), so
 # they build in place; the build tree and results go outside the checkout.
@@ -128,7 +138,7 @@ for name in "${order[@]}"; do
       cp "$pkg" "$localrepo/"
       repo-add -q "$localrepo/ci-local.db.tar.gz" "$localrepo/$(basename "$pkg")" >/dev/null
     done
-    pacman -Sy >/dev/null
+    refresh_local
     echo "PASS  $name"
     summary+=("| $name | built |")
   else

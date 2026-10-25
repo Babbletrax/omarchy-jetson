@@ -32,8 +32,8 @@ chmod +x "$fixture_dir/bin/notify-send"
 export PATH="$fixture_dir/bin:$PATH"
 
 menu="$repo_root/packages/omarchy-jetson-menu/omarchy-menu"
-$menu list workspaces | grep -Fq $'move-workspaces\tMove active window to workspace…'
-$menu list move-workspaces | grep -Fq $'move-workspace:10\tMove active window to workspace 10'
+$menu list workspaces | grep -F $'move-workspaces\tMove active window to workspace…' >/dev/null
+$menu list move-workspaces | grep -F $'move-workspace:10\tMove active window to workspace 10' >/dev/null
 
 $menu action workspace:3
 grep -Fxq 'dispatch workspace 3' "$WORKSPACE_FIXTURE_LOG"

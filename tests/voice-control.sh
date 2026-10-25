@@ -46,7 +46,10 @@ if rg -n 'hl\.exec_cmd\("voxtype daemon' "$hyprland_config"; then
 fi
 grep -Fq 'o.bind("SUPER + CTRL + F9", "Cancel dictation", "omarchy-voice-control cancel")' "$hyprland_config"
 
-$controller doctor | grep -Fq 'PASS  text.smart_auto_submit=false'
+# Capture first: grep -q stops reading at the first match, and with pipefail the
+# writer's SIGPIPE (141) would fail the test intermittently.
+doctor_out=$($controller doctor)
+grep -Fq 'PASS  text.smart_auto_submit=false' <<<"$doctor_out"
 $controller start
 $controller stop
 $controller cancel
