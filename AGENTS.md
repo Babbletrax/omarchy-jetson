@@ -76,12 +76,18 @@ This project is a thin layer over **stock upstream Omarchy**, not a fork.
 make check
 ```
 
-- `make check` needs `bash`, `jq`, `ripgrep`, `python3` and ShellCheck 0.11.0
-  on `PATH`. The static test skips ShellCheck with a warning if ShellCheck is
-  missing, so check that `shellcheck --version` works before trusting a local
-  pass.
-- CI (`.github/workflows/`) runs the same checks on an arm64 runner, along
-  with the public-hygiene scan and gitleaks.
+- `make check` needs `bash`, `git`, `gpg`, `jq`, `ripgrep`, `python3` and
+  ShellCheck 0.11.0 on `PATH`, and upstream Omarchy's files
+  (`sudo ci/install-omarchy.sh pinned` off an Omarchy system). The static test
+  skips ShellCheck with a warning if ShellCheck is missing, so check that
+  `shellcheck --version` works before trusting a local pass.
+- CI (`.github/workflows/`) runs the same checks on GitHub-hosted arm64
+  runners, along with package builds, lint, security scans and the
+  tests-required gate. See [CONTRIBUTING.md](CONTRIBUTING.md#continuous-integration).
+- A change to functional code needs a new or changed test under `tests/`.
+- Never hard-code a username, home path, address, internal hostname or
+  server. `tests/no-hardcoded-config.py` enforces this; a reviewed exception
+  goes in `tests/no-hardcoded-config.allow` with its reason.
 - `make check` validates the repository. It does not prove that a change works
   on the hardware. For a target-runtime item, record a result from a real Orin
   in `docs/review.md` before you check the item off.
