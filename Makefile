@@ -24,5 +24,6 @@ check:
 	./tests/notifications.sh
 	./tests/bar-control.sh
 	./tests/auto-update.sh
+	./tests/onboarding.sh
 	./tests/tests-required.sh
 	./tests/ci-scripts.sh

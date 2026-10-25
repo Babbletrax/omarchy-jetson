@@ -1,0 +1,31 @@
+# Maintainer: omarchy-jetson contributors
+
+pkgname=omarchy-jetson-onboarding
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='First-boot account, network and timezone setup on the console before greetd'
+arch=('aarch64')
+url='https://github.com/OWNER/omarchy-jetson'
+license=('MIT')
+# omarchy provides the shared setup form and omarchy-provision-user.
+depends=('omarchy' 'omarchy-jetson-session' 'bash' 'coreutils' 'gawk' 'gum' 'networkmanager'
+         'pacman' 'sed' 'shadow' 'sudo' 'systemd' 'util-linux')
+optdepends=('tzupdate: optional timezone detection from the network location'
+            'kbd: load the chosen keymap on the console straight away')
+install=omarchy-jetson-onboarding.install
+
+source=(
+  'omarchy-jetson-onboard'
+  'omarchy-jetson-onboarding.service'
+  "PROJECT-LICENSE::file://${startdir}/../../LICENSE"
+)
+sha256sums=('967f77b44330969b23ad12afe98b9f21cb67896d1c2f91370e8899da9ebb0e8f'
+            'fcf2cd1b086247a75e12b5e0ba4a9edf70abfb9abe138e16395a17d7370bef40'
+            '83cfe731d9126f1c55f3663e7c6e51e37267420bd92cfeafcb8ab96d2a9c12a2')
+
+package() {
+  install -Dm755 omarchy-jetson-onboard "$pkgdir/usr/bin/omarchy-jetson-onboard"
+  install -Dm644 omarchy-jetson-onboarding.service \
+    "$pkgdir/usr/lib/systemd/system/omarchy-jetson-onboarding.service"
+  install -Dm644 PROJECT-LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

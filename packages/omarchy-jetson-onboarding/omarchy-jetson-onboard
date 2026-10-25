@@ -1,0 +1,499 @@
+#!/usr/bin/env bash
+# First-boot setup for a fresh Omarchy Jetson image, on the TV console.
+#
+# omarchy-jetson-onboarding.service runs this on tty1 before greetd while the
+# setup-done marker is absent. It asks only what a fresh image cannot know:
+# keyboard, the owner's account, hostname, network and timezone. It then
+# gives the machine its own pacman keyring and hands the new account to
+# upstream Omarchy's omarchy-provision-user. greetd starts when it exits.
+#
+#   omarchy-jetson-onboard [--root DIR]           run or resume setup
+#   omarchy-jetson-onboard --boot [--root DIR]    unit entry: gate, run, retry
+#   omarchy-jetson-onboard --check [--root DIR]   exit 0 when setup is needed
+#   omarchy-jetson-onboard --status [--root DIR]  list the completed steps
+#   omarchy-jetson-onboard --valid-username NAME  exit 0 when NAME is usable
+#   omarchy-jetson-onboard --valid-hostname NAME
+#
+# Each step records its completion under /var/lib/omarchy-jetson/onboarding,
+# so a run cut short (power loss) resumes at the first unfinished step. A
+# machine that already has a usable regular account is never set up again:
+# the first check records the marker and stands down.
+#
+# --root points every file this script reads or writes at another tree (the
+# fixture tests use it with fake commands on PATH). Environment:
+#   OMARCHY_PATH                      upstream Omarchy tree (/usr/share/omarchy)
+#   OMARCHY_JETSON_ONBOARD_NET_WAIT   seconds to wait for a link (10)
+#   OMARCHY_JETSON_ONBOARD_DELAY      seconds a notice stays up (1)
+set -Eeuo pipefail
+
+OMARCHY_PATH=${OMARCHY_PATH:-/usr/share/omarchy}
+net_wait=${OMARCHY_JETSON_ONBOARD_NET_WAIT:-10}
+delay=${OMARCHY_JETSON_ONBOARD_DELAY:-1}
+
+# The documented default hostname. It is only offered: the owner can change it.
+default_hostname=omarchy-jetson
+# Hostnames that mean "nobody chose one yet": the image writer's default and
+# Arch Linux ARM's stock name. Any other existing hostname is kept as it is.
+placeholder_hostnames=" omarchy-jetson alarm localhost "
+# Device access for the desktop on Jetson: the Tegra display controller and
+# the nvhost GPU nodes are group video, the DRM render nodes group render.
+# input is left out, as upstream does: nothing here needs raw evdev access.
+account_groups=(wheel video render audio)
+
+mode=run
+root=${OMARCHY_JETSON_ROOT:-/}
+while (($#)); do
+  case $1 in
+    --root) root=${2:?--root needs a directory}; shift 2 ;;
+    --boot | --check | --status | --attempt) mode=${1#--}; shift ;;
+    --valid-username | --valid-hostname) mode=${1#--}; value=${2-}; shift $(($# > 1 ? 2 : 1)) ;;
+    -h | --help) sed -n '2,27p' "$0"; exit 0 ;;
+    *) printf 'omarchy-jetson-onboard: unknown argument: %s\n' "$1" >&2; exit 2 ;;
+  esac
+done
+
+# R is "" for the running system. shadow-utils get their own --root for a
+# prefixed tree.
+R=${root%/}
+root_opt=()
+[[ -z $R ]] || root_opt=(--root "$R")
+STATE=$R/var/lib/omarchy-jetson/onboarding
+DONE=$STATE/done
+LOG=$R/var/log/omarchy-jetson-onboarding.log
+
+# --- Upstream's setup form ----------------------------------------------------
+# The username rules, reserved names, hostname rule, keyboard list and the
+# name/e-mail prompt come from upstream's shared setup form, the one its own
+# first-boot setup (omarchy-provision-owner) and the ISO use. These fallbacks
+# only apply if a future upstream moves the file.
+OMARCHY_FORM_SIGNAL=130
+OMARCHY_USERNAME_PATTERN='^[a-z_][a-z0-9_-]*$'
+OMARCHY_RESERVED_USERNAMES='^(root|bin|daemon|mail|ftp|http|nobody|dbus|git|greeter|alarm)$'
+OMARCHY_HOSTNAME_PATTERN='^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$'
+form=$OMARCHY_PATH/install/provisioning/setup-form.sh
+# shellcheck source=/dev/null
+[[ -r $form ]] && source "$form"
+
+# --- Checks (no prompts, no writes) -------------------------------------------
+username_problem() { # name -> prints why it is not usable
+  local name=$1
+  if [[ ! $name =~ $OMARCHY_USERNAME_PATTERN || $name == *'$' ]]; then
+    echo "Use lowercase letters, digits, - and _, starting with a letter or _."
+  elif ((${#name} > 32)); then
+    echo "Use at most 32 characters."
+  elif [[ $name =~ $OMARCHY_RESERVED_USERNAMES || $name == greeter ]]; then
+    echo "That name is reserved for the system."
+  elif account_exists "$name" || awk -F: -v n="$name" '$1 == n {f = 1} END {exit !f}' "$R/etc/group" 2>/dev/null; then
+    echo "That name is already taken on this machine."
+  else
+    return 0
+  fi
+  return 1
+}
+
+hostname_ok() { [[ $1 =~ $OMARCHY_HOSTNAME_PATTERN ]]; }
+
+account_exists() { awk -F: -v n="$1" '$1 == n {f = 1} END {exit !f}' "$R/etc/passwd" 2>/dev/null; }
+
+login_def() { awk -v k="$1" '$1 == k {print $2; exit}' "$R/etc/login.defs" 2>/dev/null || true; }
+
+# Accounts someone can log in to: a regular UID, a real shell and a password
+# that is not locked. The locked stock 'alarm' account does not count; a
+# key-only account (empty password, as the USB test-drive writer makes) does.
+usable_accounts() {
+  local min max shadow=$R/etc/shadow
+  min=$(login_def UID_MIN) max=$(login_def UID_MAX)
+  [[ -r $shadow ]] || shadow=/dev/null
+  awk -F: -v min="${min:-1000}" -v max="${max:-60000}" -v shadow="$shadow" '
+    FILENAME == shadow { pw[$1] = $2; next }
+    $3 >= min && $3 <= max && $7 !~ /(nologin|false)$/ && !($1 in pw && pw[$1] ~ /^[!*]/) { print $1 }
+  ' "$shadow" "$R/etc/passwd" 2>/dev/null || true
+}
+
+setup_needed() {
+  [[ -e $DONE ]] && return 1
+  [[ -e $STATE/started ]] && return 0 # resume, even though the account exists now
+  [[ -z $(usable_accounts) ]]
+}
+
+step_done() { [[ -e $STATE/steps/$1 ]]; }
+
+# --- Small helpers ---------------------------------------------------------------
+log() { printf '[%s] %s\n' "$(date '+%F %T')" "$*" >>"$LOG"; }
+quietly() { "$@" >>"$LOG" 2>&1; }
+live() { [[ -z $R ]]; }
+
+write_file() { # path mode content -- atomic and durable
+  local tmp
+  tmp=$(mktemp "$1.XXXXXX")
+  printf '%s' "$3" >"$tmp"
+  chmod "$2" "$tmp"
+  mv -f "$tmp" "$1"
+  sync -- "$1" "$(dirname "$1")" 2>/dev/null || true
+}
+
+mark() {
+  mkdir -p "$STATE/steps"
+  write_file "$STATE/steps/$1" 0644 "$(date -u '+%FT%TZ')"$'\n'
+  log "step $1 done"
+}
+
+online() { [[ $(nmcli -t -f CONNECTIVITY general 2>/dev/null) == full ]]; }
+wired_up() { nmcli -t -f TYPE,STATE device 2>/dev/null | grep -q '^ethernet:connected'; }
+
+pause() { ((delay > 0)) && sleep "$delay" || true; }
+clear_screen() { [[ -t 1 ]] && printf '\033[H\033[2J' || true; }
+say() { gum style --margin "0 2" "$@"; }
+notice() { gum style --margin "0 2" --foreground 1 "$1"; pause; } # upstream form calls this
+header() {
+  clear_screen
+  gum style --border rounded --border-foreground 2 --padding "1 4" --margin "1 2" "Omarchy Jetson setup" "$1"
+}
+
+# gum reports Esc as 1 and Ctrl+C as 130 (the upstream form's vocabulary).
+# Ctrl+C offers a reboot; setup continues after it.
+interrupted() {
+  gum confirm --default=false --affirmative "Reboot" --negative "Keep setting up" \
+    "Reboot now? Setup continues where it stopped." || return 0
+  systemctl reboot
+  exit 0
+}
+
+# --- Steps ---------------------------------------------------------------------------
+step_keyboard() {
+  declare -F omarchy_prompt_keyboard >/dev/null || return 0
+  local status
+  header "Keyboard layout"
+  omarchy_prompt_keyboard && status=0 || status=$?
+  ((status == OMARCHY_FORM_SIGNAL)) && interrupted
+  ((status == 0)) && [[ -n ${keyboard:-} ]] || return 0 # Esc keeps the default
+  # The console keymap is written for the installed system, then loaded so
+  # the password typed next uses it.
+  quietly systemd-firstboot ${R:+--root="$R"} --keymap="$keyboard" --force || log "could not persist keymap $keyboard"
+  if live && [[ $(tty 2>/dev/null) == /dev/tty* ]]; then quietly loadkeys "$keyboard" || true; fi
+}
+
+prompt_username() {
+  local status problem
+  while true; do
+    username=$(gum input --prompt "Username> " --placeholder "lowercase letters and digits, no spaces") && status=0 || status=$?
+    ((status == OMARCHY_FORM_SIGNAL)) && { interrupted; continue; }
+    ((status == 0)) || continue
+    problem=$(username_problem "$username") && return 0
+    notice "$problem"
+  done
+}
+
+prompt_password() {
+  local status
+  while true; do
+    password=$(gum input --password --prompt "Password> " --placeholder "for login, lock screen and sudo") && status=0 || status=$?
+    ((status == OMARCHY_FORM_SIGNAL)) && { interrupted; continue; }
+    ((status == 0)) || continue
+    password_confirmation=$(gum input --password --prompt "Again> " --placeholder "type the same password again") && status=0 || status=$?
+    ((status == OMARCHY_FORM_SIGNAL)) && { interrupted; continue; }
+    ((status == 0)) || continue
+    if [[ -z $password ]]; then
+      notice "The password can't be empty."
+    elif [[ $password != "$password_confirmation" ]]; then
+      notice "The passwords don't match."
+    else
+      unset password_confirmation
+      return 0
+    fi
+  done
+}
+
+user_groups() {
+  local group list=""
+  for group in "${account_groups[@]}"; do
+    awk -F: -v g="$group" '$1 == g {f = 1} END {exit !f}' "$R/etc/group" 2>/dev/null || continue
+    list+=${list:+,}$group
+  done
+  printf '%s' "$list"
+}
+
+write_sudoers() { # file content
+  local tmp
+  mkdir -p "$R/etc/sudoers.d"
+  tmp=$(mktemp "$R/etc/sudoers.d/.onboarding.XXXXXX")
+  printf '%s\n' "$2" >"$tmp"
+  chmod 0440 "$tmp"
+  if command -v visudo >/dev/null && ! visudo -cqf "$tmp"; then
+    rm -f -- "$tmp"
+    log "rejected sudoers rule for $1"
+    return 1
+  fi
+  mv -f "$tmp" "$R/etc/sudoers.d/$1"
+}
+
+step_account() {
+  local status nopasswd=no rule
+  header "Your account"
+  # A username recorded by an interrupted attempt is kept, so a retry cannot
+  # leave a second account behind.
+  if [[ -s $STATE/user ]]; then
+    username=$(<"$STATE/user")
+    say "Continuing setup for $username."
+  else
+    prompt_username
+  fi
+  prompt_password
+
+  full_name="" email_address=""
+  if declare -F omarchy_prompt_identity >/dev/null; then
+    omarchy_prompt_identity && status=0 || status=$?
+    ((status == 0)) || { full_name="" email_address=""; }
+  fi
+
+  # Off unless the owner asks for it.
+  if gum confirm --default=false --affirmative "Yes, never ask" --negative "No, ask for my password" \
+    "Let sudo run without asking for your password? Anything running as you then has full control."; then
+    nopasswd=yes
+  fi
+
+  write_file "$STATE/user" 0600 "$username"$'\n'
+  write_file "$STATE/identity" 0600 "$(printf '%s\n%s\n' "$full_name" "$email_address")"
+
+  if account_exists "$username"; then
+    quietly usermod "${root_opt[@]}" -aG "$(user_groups)" "$username"
+  else
+    quietly useradd "${root_opt[@]}" -m -G "$(user_groups)" -s /bin/bash ${full_name:+-c "$full_name"} "$username"
+  fi
+  printf '%s:%s\n' "$username" "$password" | chpasswd "${root_opt[@]}"
+  unset password
+  log "account $username ready"
+
+  # Same grant and file name as upstream's first-boot setup.
+  write_sudoers 00-omarchy-wheel '%wheel ALL=(ALL:ALL) ALL'
+  # Same rule and file as the passwordless-sudo switch other Omarchy builds use.
+  rule="$username ALL=(ALL:ALL) NOPASSWD: ALL"
+  if [[ $nopasswd == yes ]]; then
+    write_sudoers "90-passwordless-sudo-$username" "$rule"
+  elif [[ -e $R/etc/sudoers.d/90-passwordless-sudo-$username && $(<"$R/etc/sudoers.d/90-passwordless-sudo-$username") == "$rule" ]]; then
+    rm -f -- "$R/etc/sudoers.d/90-passwordless-sudo-$username" # chosen in an earlier attempt
+  fi
+}
+
+current_hostname() {
+  local name=""
+  [[ -r $R/etc/hostname ]] && IFS= read -r name <"$R/etc/hostname" || true
+  name=${name%%#*}
+  printf '%s' "${name//[[:space:]]/}"
+}
+
+# The only write to /etc/hostname: once, here, during first-boot setup.
+write_hostname() {
+  write_file "$R/etc/hostname" 0644 "$1"$'\n'
+  if live; then quietly hostnamectl --transient hostname "$1" || true; fi
+  log "hostname set to $1"
+}
+
+step_hostname() {
+  local current name status
+  current=$(current_hostname)
+  if [[ -n $current && $placeholder_hostnames != *" $current "* ]]; then
+    log "keeping existing hostname $current"
+    return 0
+  fi
+  header "Name this machine"
+  while true; do
+    name=$(gum input --value "$default_hostname" --prompt "Hostname> " \
+      --placeholder "letters, digits and dashes; Return keeps $default_hostname") && status=0 || status=$?
+    ((status == OMARCHY_FORM_SIGNAL)) && { interrupted; continue; }
+    ((status == 0)) || name=""
+    [[ -n $name ]] || name=$default_hostname
+    hostname_ok "$name" && break
+    notice "Use 1-63 letters, digits or dashes, not starting or ending with a dash."
+  done
+  [[ $name == "$current" ]] || write_hostname "$name"
+}
+
+step_network() {
+  local waited=0 ssid pick status password ssids
+  while ((waited < net_wait)) && ! online && ! wired_up; do
+    sleep 1
+    waited=$((waited + 1))
+  done
+  if online || wired_up; then return 0; fi
+  if ! nmcli -t -f TYPE device 2>/dev/null | grep -qx wifi; then
+    header "No network"
+    say "No cable is connected and there is no Wi-Fi adapter. Setup continues offline."
+    pause
+    return 0
+  fi
+  while true; do
+    header "Connect to Wi-Fi"
+    quietly nmcli radio wifi on || true
+    # Terse output escapes ':' in a network name as '\:'.
+    ssids=$(nmcli -t -f SSID device wifi list --rescan yes 2>/dev/null | sed 's/\\:/:/g' | awk 'NF && !seen[$0]++' || true)
+    pick=$(printf '%s\n' ${ssids:+"$ssids"} "Scan again" "Skip, stay offline" |
+      gum choose --height 12 --header "Wi-Fi network") && status=0 || status=$?
+    ((status == OMARCHY_FORM_SIGNAL)) && { interrupted; continue; }
+    ((status == 0)) || return 0
+    case $pick in
+      "Skip, stay offline" | "") return 0 ;;
+      "Scan again") continue ;;
+    esac
+    ssid=$pick
+    password=$(gum input --password --prompt "Password> " --placeholder "empty for an open network") && status=0 || status=$?
+    ((status == 0)) || continue
+    say "Connecting to $ssid..."
+    # No other account exists yet, so the password on nmcli's command line
+    # is not visible to anyone else.
+    if quietly nmcli device wifi connect "$ssid" ${password:+password "$password"}; then
+      unset password
+      return 0
+    fi
+    unset password
+    notice "Could not connect to $ssid."
+  done
+}
+
+zone_ok() { [[ -n $1 && $1 != *..* && $1 != /* && -f $R/usr/share/zoneinfo/$1 ]]; }
+
+step_timezone() {
+  local current guess="" zones keep choice status
+  current=$(readlink "$R/etc/localtime" 2>/dev/null | sed 's|.*/zoneinfo/||' || true)
+  header "Timezone"
+  # Location lookup is optional: upstream's tzupdate asks a public
+  # geolocation service about this network's address, so ask first.
+  if online && command -v tzupdate >/dev/null &&
+    gum confirm --affirmative "Detect it" --negative "I'll choose" \
+      "Detect the timezone from this network's location?"; then
+    guess=$(tzupdate -p 2>/dev/null) || guess=""
+  fi
+  zones=$(timedatectl list-timezones 2>/dev/null) || zones=""
+  keep="Keep ${current:-UTC}"
+  if zone_ok "$guess"; then
+    choice=$(printf '%s\n' "$keep" "$zones" | gum choose --height 12 --selected "$guess" --header "Timezone") && status=0 || status=$?
+  else
+    choice=$(printf '%s\n' "$keep" "$zones" | gum filter --height 12 --header "Timezone (type to search)") && status=0 || status=$?
+  fi
+  ((status == OMARCHY_FORM_SIGNAL)) && interrupted
+  ((status == 0)) || return 0
+  [[ $choice != "$keep" ]] && zone_ok "$choice" || return 0
+  ln -sfn "../usr/share/zoneinfo/$choice" "$R/etc/localtime"
+  log "timezone set to $choice"
+}
+
+# A keyring that is already there on first boot came with the image, and its
+# local signing key is the same on every copy of that image. Replace it with
+# one made here, trusting the keyrings the installed packages ship.
+step_keyring() {
+  local gnupg=$R/etc/pacman.d/gnupg
+  local new=$gnupg.onboarding
+  header "Package keys"
+  say "Creating this machine's own package-signing keys (about a minute)..."
+  [[ ! -e $new ]] || rm -r -- "$new" # left by an interrupted attempt
+  mkdir -p "$(dirname "$gnupg")"
+  quietly pacman-key --gpgdir "$new" --init
+  quietly pacman-key --gpgdir "$new" --populate
+  quietly gpgconf --homedir "$new" --kill all || true
+  [[ ! -e $gnupg ]] || rm -r -- "$gnupg"
+  mv -- "$new" "$gnupg"
+  sync -- "$(dirname "$gnupg")" 2>/dev/null || true
+}
+
+step_provision() {
+  local home shell full_name="" email_address=""
+  username=$(<"$STATE/user")
+  { IFS= read -r full_name; IFS= read -r email_address; } <"$STATE/identity" 2>/dev/null || true
+  home=$(awk -F: -v u="$username" '$1 == u {print $6}' "$R/etc/passwd")
+  shell=$(awk -F: -v u="$username" '$1 == u {print $7}' "$R/etc/passwd")
+  header "Setting up Omarchy for $username"
+  say "This takes a few minutes."
+  # The same hand-over upstream's omarchy-provision-owner makes.
+  if ! quietly runuser -u "$username" -- env \
+    HOME="$home" USER="$username" LOGNAME="$username" SHELL="${shell:-/bin/bash}" \
+    OMARCHY_PATH="$OMARCHY_PATH" OMARCHY_INSTALL="$OMARCHY_PATH/install" \
+    OMARCHY_SETUP_CONTEXT=provision-owner \
+    OMARCHY_USER_NAME="$full_name" OMARCHY_USER_EMAIL="$email_address" \
+    omarchy-provision-user --force --first-install; then
+    # Like upstream: the account works; finishing can be retried after login.
+    log "omarchy-provision-user failed"
+    write_file "$STATE/provision-warning" 0644 "omarchy-provision-user --force"$'\n'
+    say --foreground 1 "Part of the user setup failed (see $LOG)." \
+      "After logging in, run: omarchy-provision-user --force"
+    pause
+  fi
+}
+
+finish() {
+  username=$(cat "$STATE/user" 2>/dev/null || true)
+  rm -f -- "$STATE/identity" # only the provision step needed it
+  # tuigreet offers the last user it saw; make that the new owner.
+  if [[ -n $username && ! -s $R/var/cache/tuigreet/lastuser ]]; then
+    mkdir -p "$R/var/cache/tuigreet"
+    printf '%s' "$username" >"$R/var/cache/tuigreet/lastuser"
+    chown greeter:greeter "$R/var/cache/tuigreet" "$R/var/cache/tuigreet/lastuser" 2>/dev/null || true
+  fi
+  write_file "$DONE" 0644 "completed $(date -u '+%FT%TZ')"$'\n'
+  rm -f -- "$STATE/started" "$STATE/user"
+  log "setup complete"
+  header "All set${username:+, $username}"
+  say "Log in on the next screen." \
+    "Super + Space opens the Omarchy menu. AI assistants and other" \
+    "apps can be added any time under Install in that menu."
+  pause
+}
+
+steps=(keyboard account hostname network timezone keyring provision)
+
+run_setup() {
+  local step
+  mkdir -p "$STATE/steps" "$(dirname "$LOG")"
+  chmod 0700 "$STATE"
+  [[ -e $LOG ]] || install -m 0600 /dev/null "$LOG"
+  [[ -e $STATE/started ]] || write_file "$STATE/started" 0644 "$(date -u '+%FT%TZ')"$'\n'
+  for step in "${steps[@]}"; do
+    step_done "$step" && continue
+    log "step $step"
+    "step_$step"
+    mark "$step"
+  done
+  finish
+}
+
+# Stand down on a machine that does not need setup, recording why, so the
+# unit's condition keeps it from running again.
+gate() {
+  setup_needed && return 0
+  if [[ ! -e $DONE ]]; then
+    mkdir -p "$STATE"
+    write_file "$DONE" 0644 "existing account $(date -u '+%FT%TZ')"$'\n'
+  fi
+  return 1
+}
+
+case $mode in
+  valid-username) username_problem "${value-}" >&2 ;;
+  valid-hostname) hostname_ok "${value-}" ;;
+  check) setup_needed ;;
+  status)
+    [[ -e $DONE ]] && printf 'done: %s\n' "$(<"$DONE")"
+    for step in "${steps[@]}"; do
+      step_done "$step" && printf '%s: done\n' "$step" || printf '%s: pending\n' "$step"
+    done
+    ;;
+  attempt) run_setup ;;
+  run)
+    ((EUID == 0)) || [[ -n $R ]] || { echo "omarchy-jetson-onboard: run as root" >&2; exit 1; }
+    gate || { echo "Setup is already done (or an account exists)."; exit 0; }
+    run_setup
+    ;;
+  boot)
+    gate || exit 0
+    # Each attempt is its own process so a failure cannot leave this one
+    # half-way; the steps are idempotent, so a retry continues safely.
+    until "$0" --attempt --root "${R:-/}"; do
+      gum style --margin "1 2" --foreground 1 "Setup hit an error (details in $LOG)."
+      if ! gum confirm --affirmative "Try again" --negative "Open a console" "Retry setup?"; then
+        # No account exists yet and root is locked, so this console is the
+        # only way in. greetd starts once it exits.
+        say "Root console. Run omarchy-jetson-onboard to continue setup."
+        exec /bin/bash
+      fi
+    done
+    ;;
+esac
