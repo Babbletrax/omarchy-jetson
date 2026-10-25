@@ -23,7 +23,7 @@ git init -q --bare -b main "$fx/primary.git"
 git init -q --bare -b main "$fx/public.git"
 git init -q -b main "$fx/w"
 # Seed with this repository's working tree, so the real hygiene scans run.
-(cd "$repo_root" && git ls-files -z --cached --others --exclude-standard | tar --null -T - -c) | tar -x -C "$fx/w"
+(cd "$repo_root" && git -c safe.directory="$repo_root" ls-files -z --cached --others --exclude-standard | tar --null -T - -c) | tar -x -C "$fx/w"
 git -C "$fx/w" add -A && git -C "$fx/w" commit -qm seed
 git -C "$fx/w" push -q "$fx/primary.git" main
 

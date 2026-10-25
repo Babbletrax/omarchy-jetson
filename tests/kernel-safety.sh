@@ -229,7 +229,7 @@ booted_after_install
 if [[ $EUID != 0 ]]; then
   if run backup; then fail 'a failed copy succeeded'; fi
   grep -q 'left as it was' "$fixture/err" || fail "copy failure message: $(err)"
-  diff -r "$fixture/lg.before" "$lg" >/dev/null || fail 'a failed copy changed last-good'
+  diff -r --no-dereference "$fixture/lg.before" "$lg" >/dev/null || fail 'a failed copy changed last-good'
   [[ ! -e $R/boot/last-good.tmp ]] || fail 'a failed copy left last-good.tmp'
   pass 'a failed copy keeps the old last-good and aborts'
 fi
@@ -272,21 +272,21 @@ printf 'kernel-image-untested\n' >"$R/boot/Image-$V"
 installed_after_boot
 run backup || fail "pending-reboot run failed: $(err)"
 grep -q 'reboot is pending' "$fixture/err" || fail "pending-reboot message: $(err)"
-diff -r "$fixture/lg.A" "$lg" >/dev/null || fail 'promoted a kernel installed after this boot'
+diff -r --no-dereference "$fixture/lg.A" "$lg" >/dev/null || fail 'promoted a kernel installed after this boot'
 pass 'a kernel installed after this boot never becomes last-good'
 
 FAKE_UNAME=6.8.12-9999-tegra run backup || fail "foreign kernel with a last-good failed: $(err)"
-diff -r "$fixture/lg.A" "$lg" >/dev/null || fail 'foreign running kernel replaced last-good'
+diff -r --no-dereference "$fixture/lg.A" "$lg" >/dev/null || fail 'foreign running kernel replaced last-good'
 FAKE_PKG_KVER=6.8.12-0000-tegra run backup || fail 'unowned Image run failed'
 grep -q 'is not installed by linux-jetson' "$fixture/err" || fail "unowned Image message: $(err)"
-diff -r "$fixture/lg.A" "$lg" >/dev/null || fail 'an Image not owned by linux-jetson was saved'
+diff -r --no-dereference "$fixture/lg.A" "$lg" >/dev/null || fail 'an Image not owned by linux-jetson was saved'
 pass 'a running kernel that is not the installed one keeps the existing last-good'
 
 booted_after_install
 printf '%s omarchy_jetson.last_good=1\n' "$(<"$R/proc/cmdline")" >"$R/proc/cmdline"
 cp "$conf" "$fixture/conf.3"
 run backup || fail "backup while on last-good failed: $(err)"
-diff -r "$fixture/lg.A" "$lg" >/dev/null || fail 'running last-good replaced last-good'
+diff -r --no-dereference "$fixture/lg.A" "$lg" >/dev/null || fail 'running last-good replaced last-good'
 cmp -s "$conf" "$fixture/conf.3" || fail 'running last-good edited extlinux.conf'
 pass 'booted from last-good: nothing is promoted or edited'
 
