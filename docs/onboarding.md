@@ -31,7 +31,7 @@ resumes even though the new account already exists.
 | keyboard | Upstream's layout picker. The keymap is written with `systemd-firstboot` and loaded on the console. |
 | account | Asks for a username and a password, entered twice. Name and e-mail for git are optional, using upstream's prompt. Passwordless sudo is offered and defaults to off. The groups are `wheel`, `video`, `render` and `audio`, which cover the Tegra display and nvhost GPU nodes and the DRM render nodes. |
 | hostname | Kept if it is already set to anything other than a placeholder (`omarchy-jetson`, `alarm`, `localhost`). Otherwise `omarchy-jetson` is offered as the default, and the owner can type another name. |
-| network | Skipped if the machine is online or a cable is connected. Otherwise a Wi-Fi list (NetworkManager) is shown. The owner can skip it and stay offline. |
+| network | Skipped if the machine is online or a cable is connected. Otherwise a Wi-Fi list (NetworkManager) is shown, with an entry for a hidden network. The owner can skip it and stay offline. Setup creates a profile without the secret, then brings it up with `nmcli connection up ... passwd-file`, so the password never appears on a command line. The passwd-file is mode 0600, in a private directory that is removed straight after. |
 | timezone | Online, the owner can opt into detection with upstream's `tzupdate`, which sends this network's address to a public geolocation service. Then pick from the list, or keep the current zone. Offline, only the list is shown. |
 | keyring | Builds a new pacman keyring for this machine and populates it from the keyrings the installed packages ship. A keyring that is already present at first boot came with the image, and its local key would be the same on every copy of that image. |
 | provision | Hands the account to upstream's `omarchy-provision-user --force --first-install`, the same way upstream's own `omarchy-provision-owner` does. If this step fails, setup still finishes and tells the owner to run `omarchy-provision-user --force` after logging in. |
@@ -45,9 +45,15 @@ Omarchy menu (**Install → AI**).
 Root stays locked, unlike upstream's own first boot, which gives root the
 owner's password.
 
-If an attempt fails, setup offers a retry. If the owner declines, it opens a
-root shell on tty1, as upstream does, because no account exists yet and root
-is locked. `omarchy-jetson-onboard` continues setup from that shell.
+If an attempt fails, setup shows the log path and offers to try again,
+reboot or power off. It never opens a shell, because console access must
+not grant root. The setup-done marker stays absent, so setup runs again on
+the next boot.
+
+The locked `alarm` account stays as it is. It may appear in tuigreet's user
+menu. Hiding it with tuigreet's `--user-menu-min-uid` is not safe: `alarm`
+has UID 1000, and so do the owner's accounts on USB test-drive images and on
+systems set up before this package.
 
 ## Hostname rule
 

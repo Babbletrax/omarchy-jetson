@@ -57,10 +57,24 @@ fake() { # name, body; FAKE_CRASH_ON=name kills the whole run there (power loss)
       "-t -f CONNECTIVITY general") echo "${FAKE_CONNECTIVITY:-full}" ;;
       "-t -f TYPE,STATE device") printf "%s\n" ${FAKE_DEVICES:-ethernet:connected} ;;
       "-t -f TYPE device") printf "%s\n" ${FAKE_DEVICES:-ethernet:connected} | cut -d: -f1 ;;
-      *"wifi list"*) printf "%s\n" FixtureNet FixtureNet CafeNet ;;
-      *"wifi connect"*) exit "${FAKE_WIFI_RC:-0}" ;;
+      *"wifi list"*) printf "%s\n" FixtureNet:WPA2 FixtureNet:WPA2 CafeNet:WPA2 "Open\\:Spot:" Lab6:WPA3 ;;
+      "--wait 45 connection up id "*)
+        if [[ $* == *" passwd-file "* ]]; then
+          f=${!#}
+          stat -c %a "$f" >>"$FIXTURE/secret-modes"
+          stat -c %a "${f%/*}" >>"$FIXTURE/secret-modes"
+          cat "$f" >>"$FIXTURE/secrets"
+          echo "$f" >>"$FIXTURE/secret-paths"
+        fi
+        n=$(($(cat "$FIXTURE/wifi-tries" 2>/dev/null || echo 0) + 1))
+        echo "$n" >"$FIXTURE/wifi-tries"
+        ((n > ${FAKE_WIFI_FAILS:-0})) ;;
     esac'
   fake useradd '
+    if [[ -n ${FAKE_USERADD_FAILS:-} && ! -e $FIXTURE/useradd-failed ]]; then
+      touch "$FIXTURE/useradd-failed"
+      exit 1
+    fi
     root=/ groups="" name=""
     while (($#)); do
       case $1 in
@@ -203,7 +217,7 @@ grep -q '^tzupdate -p' "$CALLS" || fail 'timezone detection not offered online'
 [[ ! -e $root/etc/pacman.d/gnupg.onboarding ]] || fail 'keyring staging directory left behind'
 grep -Fq "provision context=provision-owner user=alex home=$homes/alex args=--force --first-install" "$CALLS" ||
   fail "upstream provisioning not handed the new account: $(grep provision "$CALLS" || true)"
-! grep -q 'wifi connect' "$CALLS" || fail 'Wi-Fi offered while online'
+! grep -q 'connection up' "$CALLS" || fail 'Wi-Fi offered while online'
 [[ $(<"$root/var/cache/tuigreet/lastuser") == alex ]] || fail 'greeter not pointed at the new account'
 [[ -s $state/done && ! -e $state/started && ! -e $state/user && ! -e $state/identity ]] ||
   fail "state not finished cleanly: $(ls "$state")"
@@ -241,17 +255,52 @@ pass 'the default hostname is offered and can be changed'
 # --- offline: Wi-Fi via nmcli, timezone skippable --------------------------------
 make_root "$root"
 export FAKE_CONNECTIVITY=none FAKE_DEVICES='ethernet:unavailable wifi:disconnected'
-answers '<esc>' eli pw pw '' '' no '' CafeNet wifipass '<esc>'
-run "$root" --boot || fail "offline boot failed: $(<"$fixture/out")"
-grep -Fq 'nmcli device wifi connect CafeNet password wifipass' "$CALLS" || fail 'Wi-Fi connect not attempted'
+export TMPDIR=$fixture/tmp
+mkdir -p "$TMPDIR"
+wifi_reset() { rm -f "$fixture/secret-modes" "$fixture/secrets" "$fixture/secret-paths" "$fixture/wifi-tries"; }
+wifi_reset
+# A wrong password first, then a WPA3 network.
+answers '<esc>' eli pw pw '' '' no '' CafeNet wifipass Lab6 'sae pass' '<esc>'
+FAKE_WIFI_FAILS=1 run "$root" --boot || fail "offline boot failed: $(<"$fixture/out")"
+grep -Fxq 'nmcli connection add type wifi con-name CafeNet ifname * ssid CafeNet wifi-sec.key-mgmt wpa-psk' "$CALLS" ||
+  fail "WPA2 profile not created: $(grep 'nmcli connection' "$CALLS" || true)"
+grep -Fxq 'nmcli connection add type wifi con-name Lab6 ifname * ssid Lab6 wifi-sec.key-mgmt sae' "$CALLS" ||
+  fail 'a WPA3-only network must use SAE'
+[[ $(grep -c '^nmcli connection delete id CafeNet' "$CALLS") == 2 ]] || fail 'the failed profile was not removed'
+grep -Fq 'nmcli --wait 45 connection up id Lab6 passwd-file ' "$CALLS" || fail 'secret not passed through passwd-file'
+[[ $(<"$fixture/secrets") == $'802-11-wireless-security.psk:wifipass\n802-11-wireless-security.psk:sae pass' ]] ||
+  fail "passwd-file contents: $(cat "$fixture/secrets" 2>&1)"
+[[ $(sort -u "$fixture/secret-modes" | paste -sd' ') == '600 700' ]] || fail "secret file modes: $(<"$fixture/secret-modes")"
+while IFS= read -r f; do
+  [[ ! -e $f && ! -e ${f%/*} ]] || fail "secret file left behind: $f"
+done <"$fixture/secret-paths"
+! grep -Eq 'wifipass|sae pass' "$CALLS" || fail 'a Wi-Fi password reached a command line'
+! grep -rqE 'wifipass|sae pass' "$root/var" "$TMPDIR" || fail 'a Wi-Fi password was left in a log or file'
 ! grep -q '^tzupdate' "$CALLS" || fail 'timezone detection must not run offline'
 grep -q '^gum filter' "$CALLS" || fail 'manual timezone choice not offered offline'
 [[ -s $state/done ]] || fail 'offline setup did not finish'
 
 make_root "$root"
+wifi_reset
+answers '<esc>' eve pw pw '' '' no '' 'Hidden network...' 'Back Room' hidpass '<esc>'
+run "$root" --boot || fail "hidden-network boot failed: $(<"$fixture/out")"
+grep -Fxq 'nmcli connection add type wifi con-name Back Room ifname * ssid Back Room 802-11-wireless.hidden yes wifi-sec.key-mgmt wpa-psk' "$CALLS" ||
+  fail "hidden network profile: $(grep 'connection add' "$CALLS" || true)"
+! grep -q hidpass "$CALLS" || fail 'the hidden network password reached a command line'
+
+make_root "$root"
+wifi_reset
+answers '<esc>' ola pw pw '' '' no '' 'Open:Spot' '<esc>'
+run "$root" --boot || fail "open-network boot failed: $(<"$fixture/out")"
+grep -Fxq 'nmcli connection add type wifi con-name Open:Spot ifname * ssid Open:Spot' "$CALLS" ||
+  fail "open network profile: $(grep 'connection add' "$CALLS" || true)"
+grep -Fxq 'nmcli --wait 45 connection up id Open:Spot' "$CALLS" || fail 'open network not brought up without a secret'
+[[ ! -e $fixture/secrets ]] || fail 'an open network wrote a passwd-file'
+
+make_root "$root"
 answers '<esc>' fay pw pw '' '' no '' 'Skip, stay offline' '<esc>'
 run "$root" --boot || fail "skip-network boot failed: $(<"$fixture/out")"
-! grep -q 'wifi connect' "$CALLS" || fail 'skipping Wi-Fi still connected'
+! grep -q 'connection up' "$CALLS" || fail 'skipping Wi-Fi still connected'
 [[ -s $state/done ]] || fail 'setup without a network did not finish'
 export FAKE_DEVICES=ethernet:connected
 make_root "$root"
@@ -259,7 +308,7 @@ answers '<esc>' gus pw pw '' '' no '' '<esc>'
 run "$root" --boot || fail "wired boot failed: $(<"$fixture/out")"
 ! grep -q 'wifi list' "$CALLS" || fail 'Wi-Fi offered with a wired link'
 unset FAKE_CONNECTIVITY FAKE_DEVICES
-pass 'offline setup offers Wi-Fi, skips it on a wired link, and timezone stays skippable'
+pass 'Wi-Fi secrets go through a private passwd-file; hidden, open and WPA3 networks; skippable offline'
 
 # --- resume after an interruption -------------------------------------------------
 make_root "$root"
@@ -294,6 +343,34 @@ answers '<esc>' jo pw pw '' '' no '' no '<esc>'
 FAKE_PROVISION_RC=1 run "$root" --boot || fail 'a provisioning failure failed the whole setup'
 [[ -s $state/done && -e $state/provision-warning ]] || fail 'provisioning failure not recorded as a warning'
 pass 'a failed omarchy-provision-user leaves a working account and a retry hint'
+
+# --- a failed attempt never opens a shell ---------------------------------------------
+! grep -Eq '(^|[^[:alnum:]_-])(exec[[:space:]]+(/usr)?(/bin/)?(ba)?sh|sulogin|/bin/(ba)?sh[[:space:]]*$)' "$onboard" ||
+  fail 'the onboarding command can start a shell'
+make_root "$root"
+rm -f "$fixture/useradd-failed"
+answers '<esc>' kai pw pw '' '' no Reboot
+FAKE_USERADD_FAILS=1 run "$root" --boot && fail 'a failed attempt reported success'
+grep -Fxq 'systemctl reboot' "$CALLS" || fail "reboot not offered after a failure: $(<"$CALLS")"
+[[ ! -e $state/done ]] || fail 'a failed setup must leave the setup-done marker absent'
+"$onboard" --root "$root" --check || fail 'a failed setup must run again next boot'
+grep -Fq 'gum choose --header What now?' "$CALLS" || fail 'failure menu not shown'
+grep -Fq "Details are in $root/var/log/omarchy-jetson-onboarding.log" "$CALLS" || fail 'failure screen lacks the log path'
+
+make_root "$root"
+rm -f "$fixture/useradd-failed"
+answers '<esc>' kai pw pw '' '' no 'Power off'
+FAKE_USERADD_FAILS=1 run "$root" --boot && fail 'a failed attempt reported success'
+grep -Fxq 'systemctl poweroff' "$CALLS" || fail 'power-off not offered after a failure'
+[[ ! -e $state/done ]] || fail 'power-off after a failure wrote the marker'
+
+make_root "$root"
+rm -f "$fixture/useradd-failed"
+answers '<esc>' kai pw pw '' '' no 'Try again' pw2 pw2 '' '' no '' no '<esc>'
+FAKE_USERADD_FAILS=1 run "$root" --boot || fail "retry after a failure did not finish: $(<"$fixture/out")"
+[[ -s $state/done ]] || fail 'retry did not complete setup'
+grep -q '^kai:' "$root/etc/passwd" || fail 'retry did not create the account'
+pass 'a failed attempt offers retry, reboot or power-off, never a shell, and setup runs again'
 
 # --- the unit: first boot, before greetd, on tty1 ------------------------------------
 for line in 'ConditionPathExists=!/var/lib/omarchy-jetson/onboarding/done' \

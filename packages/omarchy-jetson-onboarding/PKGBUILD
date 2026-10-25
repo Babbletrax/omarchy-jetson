@@ -19,7 +19,7 @@ source=(
   'omarchy-jetson-onboarding.service'
   "PROJECT-LICENSE::file://${startdir}/../../LICENSE"
 )
-sha256sums=('967f77b44330969b23ad12afe98b9f21cb67896d1c2f91370e8899da9ebb0e8f'
+sha256sums=('af627310f98be7c46e011a1620c7de8127a8d0261674525e442435f66e5eec4a'
             'fcf2cd1b086247a75e12b5e0ba4a9edf70abfb9abe138e16395a17d7370bef40'
             '83cfe731d9126f1c55f3663e7c6e51e37267420bd92cfeafcb8ab96d2a9c12a2')
 

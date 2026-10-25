@@ -309,8 +309,45 @@ step_hostname() {
   [[ $name == "$current" ]] || write_hostname "$name"
 }
 
+# Connect through a NetworkManager profile. The secret never goes on a
+# command line: nmcli reads it from a passwd-file, 0600 in a private
+# directory that is removed straight after (and by the EXIT trap).
+secret_dir=""
+cleanup_secret() { [[ -z $secret_dir || ! -d $secret_dir ]] || rm -r -- "$secret_dir"; secret_dir=""; }
+trap cleanup_secret EXIT
+
+wifi_connect() { # ssid key-mgmt(""=open) hidden(yes|no); password in $password
+  local ssid=$1 keymgmt=$2 hidden=$3 rc=0
+  local add=(connection add type wifi con-name "$ssid" ifname '*' ssid "$ssid")
+  [[ $hidden == yes ]] && add+=(802-11-wireless.hidden yes)
+  [[ -n $keymgmt ]] && add+=(wifi-sec.key-mgmt "$keymgmt")
+  quietly nmcli connection delete id "$ssid" || true # a profile from a failed try
+  quietly nmcli "${add[@]}" || return 1
+  if [[ -n $keymgmt ]]; then
+    secret_dir=$(mktemp -d "${TMPDIR:-/tmp}/onboard-wifi.XXXXXX")
+    (umask 077 && printf '802-11-wireless-security.psk:%s\n' "$password" >"$secret_dir/secret")
+    quietly nmcli --wait 45 connection up id "$ssid" passwd-file "$secret_dir/secret" || rc=$?
+    cleanup_secret
+  else
+    quietly nmcli --wait 45 connection up id "$ssid" || rc=$?
+  fi
+  ((rc == 0)) || quietly nmcli connection delete id "$ssid" || true
+  return "$rc"
+}
+
+# WPA3-only networks need SAE; everything else with security uses a PSK.
+key_mgmt_for() { # SECURITY column of nmcli's scan
+  case $1 in
+    "" | "--") echo "" ;;
+    *WPA3*) [[ $1 == *WPA2* || $1 == *WPA1* ]] && echo wpa-psk || echo sae ;;
+    *) echo wpa-psk ;;
+  esac
+}
+
 step_network() {
-  local waited=0 ssid pick status password ssids
+  local waited=0 ssid pick status line keymgmt hidden hint
+  local -A security=()
+  local names=()
   while ((waited < net_wait)) && ! online && ! wired_up; do
     sleep 1
     waited=$((waited + 1))
@@ -325,23 +362,40 @@ step_network() {
   while true; do
     header "Connect to Wi-Fi"
     quietly nmcli radio wifi on || true
-    # Terse output escapes ':' in a network name as '\:'.
-    ssids=$(nmcli -t -f SSID device wifi list --rescan yes 2>/dev/null | sed 's/\\:/:/g' | awk 'NF && !seen[$0]++' || true)
-    pick=$(printf '%s\n' ${ssids:+"$ssids"} "Scan again" "Skip, stay offline" |
+    security=() names=()
+    # Terse output: SSID:SECURITY, with ':' in a network name escaped as '\:'.
+    while IFS= read -r line; do
+      ssid=${line%:*}
+      ssid=${ssid//\\:/:}
+      [[ -n $ssid && -z ${security[$ssid]+set} ]] || continue
+      security[$ssid]=${line##*:}
+      names+=("$ssid")
+    done < <(nmcli -t -f SSID,SECURITY device wifi list --rescan yes 2>/dev/null || true)
+    pick=$(printf '%s\n' "${names[@]}" "Hidden network..." "Scan again" "Skip, stay offline" |
       gum choose --height 12 --header "Wi-Fi network") && status=0 || status=$?
     ((status == OMARCHY_FORM_SIGNAL)) && { interrupted; continue; }
     ((status == 0)) || return 0
+    hidden=no
     case $pick in
       "Skip, stay offline" | "") return 0 ;;
       "Scan again") continue ;;
+      "Hidden network...")
+        ssid=$(gum input --prompt "Network name> " --placeholder "the exact SSID") && status=0 || status=$?
+        ((status == 0)) && [[ -n $ssid ]] || continue
+        hidden=yes keymgmt=wpa-psk
+        ;;
+      *) ssid=$pick keymgmt=$(key_mgmt_for "${security[$pick]}") ;;
     esac
-    ssid=$pick
-    password=$(gum input --password --prompt "Password> " --placeholder "empty for an open network") && status=0 || status=$?
-    ((status == 0)) || continue
+    password=""
+    if [[ -n $keymgmt ]]; then
+      hint="the network's password"
+      [[ $hidden == no ]] || hint="empty for an open network"
+      password=$(gum input --password --prompt "Password> " --placeholder "$hint") && status=0 || status=$?
+      ((status == 0)) || continue
+      [[ $hidden == yes && -z $password ]] && keymgmt=""
+    fi
     say "Connecting to $ssid..."
-    # No other account exists yet, so the password on nmcli's command line
-    # is not visible to anyone else.
-    if quietly nmcli device wifi connect "$ssid" ${password:+password "$password"}; then
+    if wifi_connect "$ssid" "$keymgmt" "$hidden"; then
       unset password
       return 0
     fi
@@ -485,15 +539,18 @@ case $mode in
   boot)
     gate || exit 0
     # Each attempt is its own process so a failure cannot leave this one
-    # half-way; the steps are idempotent, so a retry continues safely.
+    # half-way; the steps are idempotent, so a retry continues safely. A
+    # failure never opens a shell: the console must not grant root. The
+    # setup-done marker stays absent, so setup also runs again next boot.
     until "$0" --attempt --root "${R:-/}"; do
-      gum style --margin "1 2" --foreground 1 "Setup hit an error (details in $LOG)."
-      if ! gum confirm --affirmative "Try again" --negative "Open a console" "Retry setup?"; then
-        # No account exists yet and root is locked, so this console is the
-        # only way in. greetd starts once it exits.
-        say "Root console. Run omarchy-jetson-onboard to continue setup."
-        exec /bin/bash
-      fi
+      header "Setup did not finish"
+      say --foreground 1 "Something went wrong. Details are in $LOG."
+      choice=$(printf '%s\n' "Try again" "Reboot" "Power off" |
+        gum choose --header "What now?") || choice="Try again"
+      case $choice in
+        Reboot) systemctl reboot; exit 1 ;;
+        "Power off") systemctl poweroff; exit 1 ;;
+      esac
     done
     ;;
 esac
