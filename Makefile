@@ -3,6 +3,8 @@
 check:
 	./tests/static.sh
 	./tests/public-hygiene.sh
+	./tests/no-hardcoded-config.py
+	./tests/hostname-default.sh
 	./tests/dependency-policy.sh
 	./tests/display-control.sh
 	./tests/screensaver-control.sh
