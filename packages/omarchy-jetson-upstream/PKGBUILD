@@ -2,7 +2,7 @@
 
 pkgname=omarchy-jetson-upstream
 pkgver=4.0.4
-pkgrel=5
+pkgrel=6
 pkgdesc='Jetson AGX Orin layer over upstream Omarchy: hardware overrides, managed shell service, PATH ordering'
 arch=('aarch64')
 url='https://github.com/omacom/omarchy'
@@ -42,7 +42,7 @@ sha256sums=('216d997afda600242e45dba85c45c401ffd0ecf741948cec38b20e54395b2f8f'
             '382239e566260e24081400ed908a189cf0711ac7a61b828328aab1e8b162e1ec'
             'b55d3356e8a25110e17d38b66a160f09fb7600c98ce74c87f3a17570f179590e'
             'b9452e7f597ad33727580df7078de9da3c9afbf463444b5416f070221dbca76b'
-            'c37009a65778ecddf07dda716410e1cf9c92109055b43c823c84e332f1333578'
+            'b76a7722b364ebf78c010d7efd471596ac4aac06150aa993b67e5c36332bbf7f'
             'b8346549ab6ace7002f23f8bb572d67b48f10ae0793a555a4838d494e8a7b653'
             '81a886e1752e415b3d8e12201a002f749bc4a54bc606475fa7d56c6b2350da52'
             '4fedc905025ca26ceb4c143f2e86765e8d9978905a7f1d25f3d0f651635d178e'

@@ -1,0 +1,14 @@
+# shellcheck shell=bash
+
+# Enabled once on install. A later disable is the user's choice and upgrades
+# leave it alone.
+post_install() {
+  systemd-tmpfiles --create /usr/lib/tmpfiles.d/omarchy-jetson-updates.conf || true
+  systemctl enable omarchy-jetson-update-check.timer omarchy-jetson-auto-update.timer || true
+  systemctl --global enable omarchy-jetson-update-notify.path omarchy-jetson-update-notify.service || true
+}
+
+pre_remove() {
+  systemctl disable --now omarchy-jetson-update-check.timer omarchy-jetson-auto-update.timer || true
+  systemctl --global disable omarchy-jetson-update-notify.path omarchy-jetson-update-notify.service || true
+}

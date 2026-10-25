@@ -1,0 +1,11 @@
+[Unit]
+Description=Omarchy Jetson: install updates when idle (if switched on)
+After=network-online.target omarchy-jetson-update-check.service
+ConditionPathExists=/var/lib/omarchy-jetson/updates/auto-pending
+
+[Service]
+Type=oneshot
+# Block sleep and shutdown while a transaction may be running. Never reboots.
+ExecStart=/usr/bin/systemd-inhibit --what=sleep:shutdown --who=omarchy-jetson-auto-update --why="Installing system updates" --mode=block /usr/lib/omarchy-jetson/auto-update apply
+Nice=10
+IOSchedulingClass=idle

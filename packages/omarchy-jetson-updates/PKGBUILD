@@ -1,0 +1,61 @@
+# Maintainer: omarchy-jetson contributors
+
+pkgname=omarchy-jetson-updates
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Opt-in automatic system updates for Omarchy Jetson through upstream omarchy-update steps'
+arch=('aarch64')
+url='https://github.com/OWNER/omarchy-jetson'
+license=('MIT')
+depends=('omarchy' 'bash' 'coreutils' 'gawk' 'grep' 'networkmanager' 'pacman' 'pacman-contrib'
+         'sed' 'systemd' 'util-linux')
+optdepends=('gum: interactive settings menu'
+            'libnotify: notifications without the Omarchy shell')
+# Local edits (the on/off switch) survive package updates.
+backup=('etc/omarchy-jetson/auto-update.conf')
+install=omarchy-jetson-updates.install
+
+source=(
+  'omarchy-jetson-auto-update'
+  'omarchy-jetson-update-settings'
+  'omarchy-jetson-update-notify'
+  'auto-update.conf'
+  'omarchy-jetson-update-check.service'
+  'omarchy-jetson-update-check.timer'
+  'omarchy-jetson-auto-update.service'
+  'omarchy-jetson-auto-update.timer'
+  'omarchy-jetson-update-notify.service'
+  'omarchy-jetson-update-notify.path'
+  'omarchy-jetson-updates.tmpfiles'
+  "PROJECT-LICENSE::file://${startdir}/../../LICENSE"
+)
+sha256sums=('0713f6fe4214e4ed7a296eae025897c534a7cd7f04739648cffe9f5fa15d14b6'
+            '0a8e9bea1361271bc48ca20bd0b6e9e30b7b273d55b13187e6d88578a223e7cf'
+            '674a92dabfe08ccbd659bea90823e43a0bff54526eb2eb78a621cdd9a954001a'
+            'b1d13f1a60f89fccf9c4978a4fc271d1aab539a8c1ffc13061d68ad4ed984a2d'
+            '10bba529d252b871b95100da9387806dcf9e2cd59e8e9e2b594db736d5148f3e'
+            '77c467864a48f7785939cd6216a18a8f22a6ad252239fdf75379a4b76bac90c2'
+            '23c15f8d04549cc3238086fbf645746c01fbd21017b0dcbad3f2014b74ccaa9c'
+            '87512be7ffdbecc5fc65aaba296c28906469e733d1b35764a894af7690422c34'
+            '828d507a83e62e1b00939389877123f4dadd0233d5160238c18cf2654a45f903'
+            '54c8158932c8f603601714d2e9c3af86c2348327bf5d66f328e774f427af33ea'
+            '1faa1b67a728291353c3f0eddd5af8da9293b636bf4797badaf75a500527225c'
+            '83cfe731d9126f1c55f3663e7c6e51e37267420bd92cfeafcb8ab96d2a9c12a2')
+
+package() {
+  install -Dm755 omarchy-jetson-auto-update "$pkgdir/usr/lib/omarchy-jetson/auto-update"
+  install -Dm755 omarchy-jetson-update-notify "$pkgdir/usr/lib/omarchy-jetson/update-notify"
+  install -Dm755 omarchy-jetson-update-settings "$pkgdir/usr/bin/omarchy-jetson-update-settings"
+  install -Dm644 auto-update.conf "$pkgdir/etc/omarchy-jetson/auto-update.conf"
+
+  local unit
+  for unit in omarchy-jetson-update-check.service omarchy-jetson-update-check.timer \
+              omarchy-jetson-auto-update.service omarchy-jetson-auto-update.timer; do
+    install -Dm644 "$unit" "$pkgdir/usr/lib/systemd/system/$unit"
+  done
+  for unit in omarchy-jetson-update-notify.service omarchy-jetson-update-notify.path; do
+    install -Dm644 "$unit" "$pkgdir/usr/lib/systemd/user/$unit"
+  done
+  install -Dm644 omarchy-jetson-updates.tmpfiles "$pkgdir/usr/lib/tmpfiles.d/omarchy-jetson-updates.conf"
+  install -Dm644 PROJECT-LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

@@ -1,0 +1,2 @@
+d /var/lib/omarchy-jetson/updates 0755 root root -
+d /var/lib/omarchy-jetson/updates/notices 0755 root root -

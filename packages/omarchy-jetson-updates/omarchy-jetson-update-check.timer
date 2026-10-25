@@ -1,0 +1,11 @@
+[Unit]
+Description=Omarchy Jetson: daily update check and download
+
+[Timer]
+# Default 03:00. omarchy-jetson-update-settings --time HH:MM writes a drop-in.
+OnCalendar=*-*-* 03:00:00
+RandomizedDelaySec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,166 @@
+#!/usr/bin/env bash
+# Automatic update settings (Omarchy menu > Update > Automatic Updates).
+#
+#   omarchy-jetson-update-settings               interactive menu (in a terminal)
+#   omarchy-jetson-update-settings --show        print the current settings
+#   omarchy-jetson-update-settings --auto on|off switch automatic installs
+#   omarchy-jetson-update-settings --time HH:MM  daily check/download time
+#   omarchy-jetson-update-settings --check-now   run the check immediately
+#
+# The switch is enabled=yes|no in /etc/omarchy-jetson/auto-update.conf; every
+# other line of that file is kept. The time is a drop-in for the system timer:
+# /etc/systemd/system/omarchy-jetson-update-check.timer.d/10-time.conf.
+# Writing either needs root; the command re-runs itself through sudo when the
+# file is not writable.
+set -Eeuo pipefail
+
+conf=${OMARCHY_JETSON_UPDATE_CONF:-/etc/omarchy-jetson/auto-update.conf}
+state=${OMARCHY_JETSON_UPDATE_STATE:-/var/lib/omarchy-jetson/updates}
+unit_dir=${OMARCHY_JETSON_UPDATE_UNIT_DIR:-/etc/systemd/system}
+timer=omarchy-jetson-update-check.timer
+dropin_dir=$unit_dir/$timer.d
+dropin=$dropin_dir/10-time.conf
+default_time=03:00
+self=$(realpath -- "${BASH_SOURCE[0]}")
+
+die() { printf '%s\n' "$*" >&2; exit 2; }
+
+# Writable now, or creatable under the nearest existing parent.
+can_write() {
+  local path=$1
+  while [[ ! -e $path ]]; do path=$(dirname "$path"); done
+  [[ -w $path ]]
+}
+
+# Re-run through sudo unless every path can be written as we are.
+as_root() { # args -- paths...
+  local args=() path
+  while (($#)) && [[ $1 != -- ]]; do args+=("$1"); shift; done
+  shift
+  for path in "$@"; do
+    can_write "$path" || exec sudo -- "$self" "${args[@]}"
+  done
+}
+
+auto_on() { [[ -r $conf ]] && grep -qx 'enabled=yes' "$conf"; }
+
+current_time() {
+  local t=
+  [[ -r $dropin ]] && t=$(sed -n 's/^OnCalendar=\*-\*-\* \([0-2][0-9]:[0-5][0-9]\):00$/\1/p' "$dropin" | tail -n 1)
+  printf '%s\n' "${t:-$default_time}"
+}
+
+valid_time() { [[ $1 =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]]; }
+
+set_auto() {
+  local value=${1:-} line=
+  [[ $value == on || $value == off ]] || die 'Usage: omarchy-jetson-update-settings --auto on|off'
+  as_root --auto "$value" -- "$conf" "$state"
+  line=enabled=no
+  [[ $value == off ]] || line=enabled=yes
+  mkdir -p "$(dirname "$conf")"
+  local tmp
+  tmp=$(mktemp "$conf.XXXXXX")
+  if [[ -f $conf ]]; then
+    # Keep comments and any other settings; replace only the switch.
+    awk -v line="$line" '
+      /^enabled=/ { if (!done) print line; done = 1; next }
+      { print }
+      END { if (!done) print line }
+    ' "$conf" >"$tmp"
+  else
+    printf '%s\n' "$line" >"$tmp"
+  fi
+  chmod 644 "$tmp"
+  mv -f "$tmp" "$conf"
+  if [[ $value == on ]]; then
+    # Updates the last check already found install at the next idle moment.
+    if [[ -s $state/updates.txt ]] && awk 'NF && $NF != "[ignored]" { found = 1 } END { exit !found }' "$state/updates.txt"; then
+      mkdir -p "$state"
+      touch "$state/auto-pending"
+    fi
+  else
+    rm -f "$state/auto-pending"
+  fi
+  printf 'Automatic updates: %s\n' "$value"
+}
+
+set_time() {
+  local t=${1:-}
+  valid_time "$t" || die 'Use HH:MM (24-hour), for example 03:00'
+  as_root --time "$t" -- "$dropin"
+  local content
+  # Clear the packaged schedule, then run daily at the chosen time, spread a
+  # little so many boards do not hit the mirrors at once. Persistent catches up
+  # after the board was off at that time.
+  content=$(printf '%s\n' \
+    '# Written by omarchy-jetson-update-settings --time.' \
+    '[Timer]' \
+    'OnCalendar=' \
+    "OnCalendar=*-*-* $t:00" \
+    'RandomizedDelaySec=10min' \
+    'Persistent=true')
+  if [[ -f $dropin && $(<"$dropin") == "$content" ]]; then
+    printf 'Daily update check already at %s\n' "$t"
+    return 0
+  fi
+  mkdir -p "$dropin_dir"
+  printf '%s\n' "$content" >"$dropin.tmp"
+  chmod 644 "$dropin.tmp"
+  mv -f "$dropin.tmp" "$dropin"
+  systemctl daemon-reload
+  systemctl restart "$timer"
+  printf 'Daily update check at %s\n' "$t"
+}
+
+pending_count() {
+  [[ -r $state/updates.txt ]] || { echo 0; return; }
+  awk 'NF && $NF != "[ignored]" { n++ } END { print n + 0 }' "$state/updates.txt"
+}
+
+show() {
+  local last=none
+  [[ -s $state/notices/auto-update ]] && last=$(head -n 1 "$state/notices/auto-update")
+  printf 'automatic=%s\n' "$(auto_on && echo on || echo off)"
+  printf 'time=%s\n' "$(current_time)"
+  printf 'pending=%s\n' "$(pending_count)"
+  printf 'last=%s\n' "$last"
+}
+
+check_now() {
+  [[ $EUID == 0 ]] || exec sudo -- "$self" --check-now
+  systemctl start omarchy-jetson-update-check.service
+  printf '%s update(s) pending\n' "$(pending_count)"
+}
+
+menu() {
+  command -v gum >/dev/null 2>&1 || die 'The menu needs gum; use --auto, --time or --show.'
+  local now choice auto_label t
+  now=$(current_time)
+  if auto_on; then
+    auto_label="Automatic updates: On (installs when idle, after the $now check)"
+  else
+    auto_label='Automatic updates: Off (check and download only)'
+  fi
+  choice=$(gum choose --header "Updates ($(pending_count) pending)" \
+    "$auto_label" "Daily check time: $now" 'Check for updates now' 'Close') || exit 0
+  case $choice in
+    'Automatic updates: On'*) "$self" --auto off ;;
+    'Automatic updates: Off'*) "$self" --auto on ;;
+    'Daily check time'*)
+      t=$(gum input --header 'Daily check time (HH:MM, 24-hour)' --value "$now") || exit 0
+      "$self" --time "$t"
+      ;;
+    'Check for updates now') "$self" --check-now ;;
+  esac
+}
+
+if (($# > 2)); then die 'Too many arguments'; fi
+case ${1:-} in
+  --show) (($# == 1)) || die 'Usage: --show'; show ;;
+  --auto) (($# == 2)) || die 'Usage: --auto on|off'; set_auto "$2" ;;
+  --time) (($# == 2)) || die 'Usage: --time HH:MM'; set_time "$2" ;;
+  --check-now) check_now ;;
+  '' | menu) menu ;;
+  *) die 'Usage: omarchy-jetson-update-settings [--show | --auto on|off | --time HH:MM | --check-now]' ;;
+esac

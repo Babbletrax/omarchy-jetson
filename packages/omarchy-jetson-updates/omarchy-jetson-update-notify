@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Turns the automatic-update notice into a desktop notification, once per
+# notice. Runs in the user session (omarchy-jetson-update-notify.path fires when
+# the notice changes; the service also runs at login).
+#   ok      updates were installed; upstream's omarchy-migrate-notify then
+#           offers any pending migrations
+#   failed  the run did not finish and will be retried
+#   kernel  a kernel/BSP update (or a missing IgnorePkg hold) needs the user
+set -Eeuo pipefail
+
+state=${OMARCHY_JETSON_UPDATE_STATE:-/var/lib/omarchy-jetson/updates}
+notice=$state/notices/auto-update
+seen_dir=${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-jetson
+seen=$seen_dir/auto-update-notice-seen
+
+[[ -s $notice ]] || exit 0
+cmp -s "$notice" "$seen" 2>/dev/null && exit 0
+
+kind=$(head -n 1 "$notice")
+message=$(tail -n +2 "$notice")
+
+send() { # urgency, headline, body
+  if command -v omarchy-notification-send >/dev/null 2>&1; then
+    command -v omarchy-notification-wait >/dev/null 2>&1 && { omarchy-notification-wait || true; }
+    omarchy-notification-send -u "$1" "$2" "$3"
+  else
+    notify-send -u "$1" "$2" "$3"
+  fi
+}
+
+case $kind in
+  ok) send normal 'Updates installed' "$message" ;;
+  failed) send critical 'Automatic update did not finish' "$message" ;;
+  kernel) send critical 'Kernel update needs you' "$message" ;;
+  *) exit 0 ;;
+esac
+
+mkdir -p "$seen_dir"
+cp -f "$notice" "$seen"
+
+if [[ $kind == ok ]] && command -v omarchy-migrate-notify >/dev/null 2>&1; then
+  omarchy-migrate-notify || true
+fi

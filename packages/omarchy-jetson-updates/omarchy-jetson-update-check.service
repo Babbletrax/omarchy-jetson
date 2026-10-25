@@ -1,0 +1,10 @@
+[Unit]
+Description=Omarchy Jetson: check for and download system updates
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/omarchy-jetson/auto-update check
+Nice=19
+IOSchedulingClass=idle

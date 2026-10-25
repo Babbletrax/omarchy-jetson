@@ -59,6 +59,15 @@
       "description": "NVIDIA nvpmodel power mode and clocks",
       "when": "command -v omarchy-jetson-power",
       "action": "omarchy-jetson-power menu"
+    },
+    // Opt-in automatic system updates (omarchy-jetson-updates): on/off and the
+    // daily check time. Runs in a terminal because changing them needs sudo.
+    "update.automatic": {
+      "icon": "󰚰",
+      "label": "Automatic Updates",
+      "description": "Install updates by themselves when idle, and the daily check time",
+      "when": "command -v omarchy-jetson-update-settings",
+      "action": "omarchy-launch-floating-terminal-with-presentation omarchy-jetson-update-settings"
     }
   }
 }
