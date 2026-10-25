@@ -10,12 +10,14 @@ sync=$repo_root/ci/mirror-sync.sh
 mkdir -p "$fx/bin"
 cat >"$fx/bin/gitleaks" <<'SH'
 #!/usr/bin/env bash
+printf '%s\n' "$*" >>"${GITLEAKS_ARGS_LOG:?}"
 for a in "$@"; do case $a in --log-opts=*) range=${a#--log-opts=} ;; esac; done
 dir=${!#}
 git --git-dir="$dir" log --name-only --format= $range | grep -qx LEAK && exit 1
 exit 0
 SH
 chmod +x "$fx/bin/gitleaks"
+export GITLEAKS_ARGS_LOG="$fx/gitleaks-args"
 export PATH="$fx/bin:$PATH" HYGIENE_PRIVATE_PATTERNS='' GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com \
   GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com HYGIENE_PRIVATE_FILE=/nonexistent
 
@@ -40,6 +42,8 @@ run() { "$sync" "$fx/primary.git" "$fx/public.git" main; }
 out=$(run)
 [[ $out == *"publishing"* ]]
 [[ $(head_of "$fx/public.git") == "$(head_of "$fx/primary.git")" ]]
+# gitleaks ran with the tip's reviewed allow list.
+grep -q -- '--config .*gitleaks.toml' "$GITLEAKS_ARGS_LOG"
 
 # 2. Primary ahead: fast-forwards public.
 commit notes.md 'a note'

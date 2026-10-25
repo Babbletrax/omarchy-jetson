@@ -75,7 +75,12 @@ gate() {
       }
   done < <(g rev-list --reverse "$range")
   if command -v gitleaks >/dev/null; then
-    gitleaks git --redact --no-banner --log-opts="$range" --exit-code 1 "$work/repo.git" >/dev/null 2>&1 ||
+    # The tip's reviewed allow list (e.g. public signing-key fingerprints).
+    local config=()
+    if g show "$to:.gitleaks.toml" >"$work/gitleaks.toml" 2>/dev/null; then
+      config=(--config "$work/gitleaks.toml")
+    fi
+    gitleaks git "${config[@]}" --redact --no-banner --log-opts="$range" --exit-code 1 "$work/repo.git" >/dev/null 2>&1 ||
       {
         say "gitleaks found something in $range: not publishing"
         return 1
