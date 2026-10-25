@@ -1,0 +1,27 @@
+# First-boot setup on the TV console, before the login screen. Runs while
+# the setup-done marker is absent; on a machine that already has a usable
+# account the script records the marker and exits at once. greetd is only
+# ordered after this unit, so it starts whether setup succeeds or not.
+[Unit]
+Description=Omarchy Jetson first-boot setup
+ConditionPathExists=!/var/lib/omarchy-jetson/onboarding/done
+After=systemd-user-sessions.service systemd-vconsole-setup.service NetworkManager.service
+Before=greetd.service display-manager.service getty@tty1.service
+Conflicts=getty@tty1.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/omarchy-jetson-onboard --boot
+Environment=TERM=linux
+StandardInput=tty
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+TimeoutStartSec=infinity
+
+[Install]
+WantedBy=multi-user.target

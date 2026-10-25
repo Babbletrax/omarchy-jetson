@@ -1,0 +1,11 @@
+# shellcheck shell=bash
+
+# Enabled on install. On a machine that already has an account the unit
+# records the setup-done marker on its first start and never runs again.
+post_install() {
+  systemctl enable omarchy-jetson-onboarding.service || true
+}
+
+pre_remove() {
+  systemctl disable omarchy-jetson-onboarding.service || true
+}
