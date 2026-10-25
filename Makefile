@@ -8,6 +8,7 @@ check:
 	./tests/screensaver-control.sh
 	./tests/shell-seeding.sh
 	./tests/upstream-pins.sh
+	./tests/package-checksums.sh
 	./tests/appearance-control.sh
 	./tests/workspace-menu.sh
 	./tests/screenrecord-control.sh
