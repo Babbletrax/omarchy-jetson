@@ -1,0 +1,143 @@
+# GitLab CI for omarchy-jetson. GitHub Actions (.github/workflows) runs the
+# same checks for the public mirror; this file is for the GitLab project, which
+# runs them on a project runner tagged `orin-arm64` (an Arch Linux ARM Docker
+# image with makepkg, namcap, ShellCheck, gitleaks and trivy). The runner and
+# its image are the maintainer's own and are not part of this build.
+#
+# The `mirror` job (scheduled) keeps GitLab and GitHub in step in both
+# directions, fast-forward only (ci/mirror-sync.sh). It needs the CI variables
+# MIRROR_PRIMARY_URL and MIRROR_PUBLIC_URL (masked, protected; URLs with tokens).
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+default:
+  tags: [orin-arm64]
+  interruptible: true
+
+variables:
+  GIT_DEPTH: "0"
+  TRIVY_CACHE_DIR: /cache/trivy
+
+stages: [check, security, build, publish]
+
+.not-mirror-schedule:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule" && $SCHEDULE == "mirror"
+      when: never
+    - when: on_success
+
+regression:
+  stage: check
+  extends: .not-mirror-schedule
+  before_script:
+    - ci/install-omarchy.sh pinned
+  script:
+    - make check
+
+regression-upstream-next:
+  stage: check
+  extends: .not-mirror-schedule
+  allow_failure: true
+  before_script:
+    - ci/install-omarchy.sh latest
+  script:
+    - make check
+
+tests-required:
+  stage: check
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  script:
+    - git fetch -q origin "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+    - PR_LABELS="$CI_MERGE_REQUEST_LABELS" ci/tests-required.sh FETCH_HEAD HEAD
+
+hygiene:
+  stage: check
+  extends: .not-mirror-schedule
+  # HYGIENE_PRIVATE_FILE: optional file variable with private block-list patterns.
+  script:
+    - ./tests/public-hygiene.sh
+    - ./tests/no-hardcoded-config.py
+
+lint:
+  stage: check
+  extends: .not-mirror-schedule
+  script:
+    - |
+      if [[ $CI_PIPELINE_SOURCE == merge_request_event ]]; then
+        git fetch -q origin "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+        ci/lint-format.sh FETCH_HEAD
+      else
+        ci/lint-format.sh "${CI_COMMIT_BEFORE_SHA:-HEAD~1}"
+      fi
+
+secrets:
+  stage: security
+  extends: .not-mirror-schedule
+  script:
+    - git config --global --add safe.directory "$CI_PROJECT_DIR"
+    - gitleaks git --config .gitleaks.toml --redact --log-opts="--all" --exit-code 1 .
+
+trivy:
+  stage: security
+  extends: .not-mirror-schedule
+  script:
+    - trivy fs --scanners vuln,secret,misconfig --severity HIGH,CRITICAL --exit-code 1 --no-progress .
+
+advisories:
+  stage: security
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule" && $SCHEDULE == "mirror"
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "schedule" || $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH || $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes: [config/**/*, packages/*/PKGBUILD, packages/*/sources.lock]
+  script:
+    - pacman -Sy >/dev/null
+    - python3 ci/advisories.py
+
+upstreams:
+  stage: security
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule" && $SCHEDULE == "mirror"
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "schedule" || $CI_PIPELINE_SOURCE == "web"
+  allow_failure: true
+  script:
+    - python3 scripts/check-upstreams.py
+
+packages:
+  stage: build
+  extends: .not-mirror-schedule
+  timeout: 2h
+  script:
+    - |
+      if [[ $CI_PIPELINE_SOURCE == merge_request_event ]]; then
+        git fetch -q origin "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+        export BASE_SHA=$(git merge-base FETCH_HEAD HEAD)
+      elif [[ $CI_COMMIT_BRANCH == "$CI_DEFAULT_BRANCH" || $CI_PIPELINE_SOURCE =~ ^(schedule|web)$ ]]; then
+        export BUILD_ALL=true
+      fi
+    - ci/build-packages.sh
+  artifacts:
+    when: always
+    expire_in: 1 week
+    # Logs and namcap reports only: the CUDA package alone exceeds the limit.
+    paths: [ci-out/*.log, ci-out/*/*.namcap]
+
+mirror:
+  stage: publish
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule" && $SCHEDULE == "mirror"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $MIRROR_PUBLIC_URL
+  interruptible: false
+  resource_group: mirror
+  script:
+    - ci/mirror-sync.sh "$MIRROR_PRIMARY_URL" "$MIRROR_PUBLIC_URL" "$CI_DEFAULT_BRANCH"

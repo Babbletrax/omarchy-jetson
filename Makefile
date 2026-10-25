@@ -26,3 +26,4 @@ check:
 	./tests/auto-update.sh
 	./tests/tests-required.sh
 	./tests/ci-scripts.sh
+	./tests/mirror-sync.sh
