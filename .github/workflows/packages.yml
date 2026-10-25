@@ -1,0 +1,58 @@
+name: packages
+
+# Build the packages a change touches (every package on main, on schedule and
+# on a manual run) with makepkg in an Arch Linux ARM container made from the
+# official, signature-verified rootfs (ci/alarm-container.sh), then lint them
+# with namcap. Packages that need the NVIDIA BSP tree are skipped with a note.
+# Only logs and namcap reports are kept: the CUDA package alone is too large to
+# be a useful artifact.
+
+on:
+  push:
+    branches: [main]
+    paths: ['packages/**', 'ci/**', 'config/**', '.github/workflows/packages.yml']
+  pull_request:
+    paths: ['packages/**', 'ci/**', 'config/**', '.github/workflows/packages.yml']
+  schedule:
+    - cron: '41 2 * * 0'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: makepkg + namcap
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    steps:
+      - name: Check out (full history, to diff against the base)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Build the Arch Linux ARM container (verified rootfs)
+        run: ci/alarm-container.sh build
+
+      - name: Build and lint packages
+        env:
+          BUILD_ALL: ${{ github.event_name != 'pull_request' }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: ci/alarm-container.sh run ci/build-packages.sh
+
+      - name: Keep build logs and namcap reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: package-logs
+          path: |
+            ci-out/*.log
+            ci-out/*/*.namcap
+          if-no-files-found: ignore
+          retention-days: 14

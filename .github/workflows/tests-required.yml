@@ -1,0 +1,38 @@
+name: tests required
+
+# A pull request that changes functional code must add or change a test under
+# tests/ (ci/tests-required.sh, tested by tests/tests-required.sh). Docs-only,
+# workflow-only, Dependabot and pkgver/pkgrel/checksum-only changes are exempt.
+# A maintainer can waive it with the `no-tests-needed` label, which the job
+# summary records.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  tests-required:
+    name: tests required
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Check out (full history, to diff against the base)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Changed code comes with tests
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: ci/tests-required.sh "$BASE_SHA" HEAD

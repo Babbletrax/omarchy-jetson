@@ -4,5 +4,9 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # Let a new action release age a week before proposing it, so a
+    # compromised release is more likely to be caught and pulled first.
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: ci

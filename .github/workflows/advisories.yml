@@ -1,0 +1,45 @@
+name: advisories
+
+# Known vulnerabilities in what the build ships: the Arch Linux ARM and Omarchy
+# repository packages it installs (Arch security tracker, over the install
+# closure resolved by pacman) and the upstreams it pins (OSV). Runs in the
+# verified Arch Linux ARM container, since it needs pacman and vercmp.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'config/*packages*.txt'
+      - 'packages/*/PKGBUILD'
+      - 'packages/*/sources.lock'
+      - 'ci/advisories.py'
+      - '.github/workflows/advisories.yml'
+  schedule:
+    - cron: '7 6 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  advisories:
+    name: Arch security tracker + OSV
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build the Arch Linux ARM container (verified rootfs)
+        run: ci/alarm-container.sh build
+
+      - name: Check advisories
+        run: ci/alarm-container.sh run 'pacman -Sy >/dev/null && python3 -I ci/advisories.py'
