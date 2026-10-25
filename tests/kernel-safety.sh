@@ -17,7 +17,10 @@ trap 'rm -r -- "$fixture"' EXIT
 bin=$fixture/bin
 mkdir -p "$bin"
 
-fail() { printf 'FAIL  %s\n' "$*" >&2; exit 1; }
+fail() {
+  printf 'FAIL  %s\n' "$*" >&2
+  exit 1
+}
 pass() { printf 'PASS  %s\n' "$*"; }
 
 fake() { # name, body
@@ -86,7 +89,10 @@ EOF
 
 # A booted system: kernel, initrd and modules installed before this boot.
 make_tree() {
-  [[ -e $R ]] && { chmod -R u+rwX "$R"; rm -r -- "$R"; }
+  [[ -e $R ]] && {
+    chmod -R u+rwX "$R"
+    rm -r -- "$R"
+  }
   mkdir -p "$R/boot/extlinux" "$R/boot/dtb" "$R/proc" "$R/usr/lib/modules/$V/kernel/drivers" \
     "$R/usr/lib/modules/$V/updates/drivers/net"
   printf 'kernel-image-A\n' >"$R/boot/Image-$V"

@@ -35,12 +35,18 @@ g remote add public "$public"
 g fetch -q --no-tags primary "+refs/heads/$branch:refs/remotes/primary/$branch" "+refs/tags/*:refs/tags/primary/*" 2>&1 | redact
 g fetch -q --no-tags public "+refs/heads/$branch:refs/remotes/public/$branch" "+refs/tags/*:refs/tags/public/*" 2>&1 | redact || true
 
-p=$(g rev-parse -q --verify "refs/remotes/primary/$branch") || { say "primary has no $branch"; exit 1; }
+p=$(g rev-parse -q --verify "refs/remotes/primary/$branch") || {
+  say "primary has no $branch"
+  exit 1
+}
 q=$(g rev-parse -q --verify "refs/remotes/public/$branch" || true)
 
 push() {
   local remote=$1 ref=$2
-  if [[ $dry == 1 ]]; then say "dry-run: would push $ref to $remote"; return; fi
+  if [[ $dry == 1 ]]; then
+    say "dry-run: would push $ref to $remote"
+    return
+  fi
   g push -q "$remote" "$ref" 2>&1 | redact
 }
 
@@ -55,13 +61,20 @@ gate() {
     tree=$(mktemp -d "$work/tree.XXXXXX")
     g --work-tree="$tree" checkout -q "$c" -- .
     (cd "$tree" && ./tests/public-hygiene.sh && ./tests/no-hardcoded-config.py) >/dev/null 2>&1 ||
-      { say "hygiene failed on commit $c: not publishing"; return 1; }
+      {
+        say "hygiene failed on commit $c: not publishing"
+        return 1
+      }
   done < <(g rev-list --reverse "$range")
   if command -v gitleaks >/dev/null; then
     gitleaks git --redact --no-banner --log-opts="$range" --exit-code 1 "$work/repo.git" >/dev/null 2>&1 ||
-      { say "gitleaks found something in $range: not publishing"; return 1; }
+      {
+        say "gitleaks found something in $range: not publishing"
+        return 1
+      }
   else
-    say "gitleaks not installed: not publishing"; return 1
+    say "gitleaks not installed: not publishing"
+    return 1
   fi
 }
 
@@ -96,7 +109,8 @@ while read -r tag; do
   elif [[ -z $a && -n $b ]]; then
     push primary "refs/tags/public/$tag:refs/tags/$tag"
   elif [[ $a != "$b" ]]; then
-    say "tag $tag differs between the sides: left alone"; status=4
+    say "tag $tag differs between the sides: left alone"
+    status=4
   fi
 done < <(g for-each-ref --format='%(refname)' refs/tags/primary refs/tags/public |
   sed -E 's#^refs/tags/(primary|public)/##' | sort -u)

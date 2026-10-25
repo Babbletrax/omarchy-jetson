@@ -194,11 +194,26 @@ do_apply() {
     rm -f "$pending"
     return 0
   fi
-  online || { log 'waiting: not fully online'; return 0; }
-  pacman_busy && { log 'waiting: a pacman transaction is running'; return 0; }
-  upstream_update_running && { log 'waiting: an Omarchy update is running'; return 0; }
-  free_space_ok || { log "waiting: less than $((min_free_kib / 1024 / 1024)) GiB free on /"; return 0; }
-  sessions_idle || { log 'waiting: a desktop session is in use'; return 0; }
+  online || {
+    log 'waiting: not fully online'
+    return 0
+  }
+  pacman_busy && {
+    log 'waiting: a pacman transaction is running'
+    return 0
+  }
+  upstream_update_running && {
+    log 'waiting: an Omarchy update is running'
+    return 0
+  }
+  free_space_ok || {
+    log "waiting: less than $((min_free_kib / 1024 / 1024)) GiB free on /"
+    return 0
+  }
+  sessions_idle || {
+    log 'waiting: a desktop session is in use'
+    return 0
+  }
 
   local rc=0 kernel names count
   refresh_list || rc=$?

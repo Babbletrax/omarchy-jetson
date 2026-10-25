@@ -18,7 +18,10 @@ shell_pid=''
 healthy=0
 terminating=0
 
-log() { logger --tag "$log_tag" -- "$*" 2>/dev/null || true; printf '%s\n' "$*" >&2; }
+log() {
+  logger --tag "$log_tag" -- "$*" 2>/dev/null || true
+  printf '%s\n' "$*" >&2
+}
 
 # Seeding only when a file is absent leaves it stale after every package
 # upgrade, so record what was seeded: refresh the copy while it still matches
@@ -55,7 +58,7 @@ link_agent_skills() {
     skill=${skill%/}
     name=${skill##*/}
     for dir in "$HOME/.agents/skills" "$HOME/.claude/skills" "$HOME/.codex/skills" \
-               "$HOME/.pi/agent/skills"; do
+      "$HOME/.pi/agent/skills"; do
       [[ -d ${dir%/skills} ]] || continue
       if [[ -e $dir/$name || -L $dir/$name ]]; then
         target=$(readlink "$dir/$name" 2>/dev/null) || continue
@@ -113,7 +116,7 @@ run_shell() {
     sleep 0.1
   done
 
-  if (( !healthy )); then
+  if ((! healthy)); then
     log 'event=start-failed reason=health-timeout timeout=5s'
     kill -TERM "$shell_pid" 2>/dev/null || true
     wait "$shell_pid" || true
@@ -122,11 +125,11 @@ run_shell() {
 
   status=0
   wait "$shell_pid" || status=$?
-  if (( terminating )); then
+  if ((terminating)); then
     log 'event=stopped reason=requested'
     return 0
   fi
-  if (( status != 0 )); then
+  if ((status != 0)); then
     log "event=crashed status=$status"
   else
     log 'event=stopped status=0'
@@ -143,5 +146,8 @@ case ${1:-status} in
     systemctl --user status omarchy-jetson-shell.service --no-pager
     ;;
   ping) shell_ping ;;
-  *) printf 'Usage: omarchy-jetson-shell {run|start|stop|restart|status|ping}\n' >&2; exit 2 ;;
+  *)
+    printf 'Usage: omarchy-jetson-shell {run|start|stop|restart|status|ping}\n' >&2
+    exit 2
+    ;;
 esac

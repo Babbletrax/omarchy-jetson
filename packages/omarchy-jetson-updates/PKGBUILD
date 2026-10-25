@@ -29,8 +29,8 @@ source=(
   'omarchy-jetson-updates.tmpfiles'
   "PROJECT-LICENSE::file://${startdir}/../../LICENSE"
 )
-sha256sums=('ed87395bdb318434fa62552f2442e17cd8221a4a5ccd7f1273e965b474b87609'
-            '0a8e9bea1361271bc48ca20bd0b6e9e30b7b273d55b13187e6d88578a223e7cf'
+sha256sums=('74666be5cfb639106c9f0346c8ffd5ee9c1ec19f99db419fe94bb2dbe7824a0d'
+            '732705010cf117fcee3dea0feee4098f9b89cbd44be819f330cc5e8f5f1e25bf'
             '674a92dabfe08ccbd659bea90823e43a0bff54526eb2eb78a621cdd9a954001a'
             'b1d13f1a60f89fccf9c4978a4fc271d1aab539a8c1ffc13061d68ad4ed984a2d'
             '10bba529d252b871b95100da9387806dcf9e2cd59e8e9e2b594db736d5148f3e'

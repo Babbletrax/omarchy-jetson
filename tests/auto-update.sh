@@ -15,7 +15,10 @@ trap 'rm -r -- "$fixture"' EXIT
 bin=$fixture/bin
 mkdir -p "$bin"
 
-fail() { printf 'FAIL  %s\n' "$*" >&2; exit 1; }
+fail() {
+  printf 'FAIL  %s\n' "$*" >&2
+  exit 1
+}
 pass() { printf 'PASS  %s\n' "$*"; }
 
 fake() { # name, body

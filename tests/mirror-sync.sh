@@ -82,7 +82,8 @@ git -C "$fx/w" push -q "$fx/primary.git" main
 (cd "$fx/gh" && git pull -q && printf 'x\n' >gh.md && git add gh.md && git commit -qm gh && git push -q origin main)
 p0=$(head_of "$fx/primary.git") q0=$(head_of "$fx/public.git")
 set +e
-out=$(run); rc=$?
+out=$(run)
+rc=$?
 set -e
 [[ $rc == 3 && $out == *DIVERGED* ]]
 [[ $(head_of "$fx/primary.git") == "$p0" && $(head_of "$fx/public.git") == "$q0" ]]
@@ -93,12 +94,14 @@ git --git-dir="$fx/primary.git" tag v0 "$(git --git-dir="$fx/primary.git" rev-pa
 git --git-dir="$fx/primary.git" tag clash "$p0"
 git --git-dir="$fx/public.git" tag clash "$q0"
 set +e
-out=$(run); rc=$?
+out=$(run)
+rc=$?
 set -e
-[[ $rc == 3 ]]   # still diverged; branch handling stops before tags
+[[ $rc == 3 ]] # still diverged; branch handling stops before tags
 git -C "$fx/w" pull -q --no-rebase "$fx/public.git" main && git -C "$fx/w" push -q "$fx/primary.git" main
 set +e
-out=$(run); rc=$?
+out=$(run)
+rc=$?
 set -e
 [[ $rc == 4 && $out == *"tag clash differs"* ]]
 git --git-dir="$fx/primary.git" rev-parse -q --verify refs/tags/v1 >/dev/null

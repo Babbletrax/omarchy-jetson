@@ -23,7 +23,10 @@ dropin=$dropin_dir/10-time.conf
 default_time=03:00
 self=$(realpath -- "${BASH_SOURCE[0]}")
 
-die() { printf '%s\n' "$*" >&2; exit 2; }
+die() {
+  printf '%s\n' "$*" >&2
+  exit 2
+}
 
 # Writable now, or creatable under the nearest existing parent.
 can_write() {
@@ -35,7 +38,10 @@ can_write() {
 # Re-run through sudo unless every path can be written as we are.
 as_root() { # args -- paths...
   local args=() path
-  while (($#)) && [[ $1 != -- ]]; do args+=("$1"); shift; done
+  while (($#)) && [[ $1 != -- ]]; do
+    args+=("$1")
+    shift
+  done
   shift
   for path in "$@"; do
     can_write "$path" || exec sudo -- "$self" "${args[@]}"
@@ -114,7 +120,10 @@ set_time() {
 }
 
 pending_count() {
-  [[ -r $state/updates.txt ]] || { echo 0; return; }
+  [[ -r $state/updates.txt ]] || {
+    echo 0
+    return
+  }
   awk 'NF && $NF != "[ignored]" { n++ } END { print n + 0 }' "$state/updates.txt"
 }
 
@@ -157,9 +166,18 @@ menu() {
 
 if (($# > 2)); then die 'Too many arguments'; fi
 case ${1:-} in
-  --show) (($# == 1)) || die 'Usage: --show'; show ;;
-  --auto) (($# == 2)) || die 'Usage: --auto on|off'; set_auto "$2" ;;
-  --time) (($# == 2)) || die 'Usage: --time HH:MM'; set_time "$2" ;;
+  --show)
+    (($# == 1)) || die 'Usage: --show'
+    show
+    ;;
+  --auto)
+    (($# == 2)) || die 'Usage: --auto on|off'
+    set_auto "$2"
+    ;;
+  --time)
+    (($# == 2)) || die 'Usage: --time HH:MM'
+    set_time "$2"
+    ;;
   --check-now) check_now ;;
   '' | menu) menu ;;
   *) die 'Usage: omarchy-jetson-update-settings [--show | --auto on|off | --time HH:MM | --check-now]' ;;

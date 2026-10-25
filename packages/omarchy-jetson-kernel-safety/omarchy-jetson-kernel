@@ -399,20 +399,35 @@ do_restore_modules() {
   local ver lgver src dst
   ver=$(uname -r)
   booted_last_good || return 0
-  [[ -s $lg/VERSION ]] || { log "booted last-good, but /boot/last-good holds no kernel"; return 0; }
+  [[ -s $lg/VERSION ]] || {
+    log "booted last-good, but /boot/last-good holds no kernel"
+    return 0
+  }
   lgver=$(<"$lg/VERSION")
-  [[ $lgver == "$ver" ]] || { log "booted last-good, but it holds $lgver, not the running $ver; modules left alone"; return 0; }
+  [[ $lgver == "$ver" ]] || {
+    log "booted last-good, but it holds $lgver, not the running $ver; modules left alone"
+    return 0
+  }
   src=$lg/modules/$ver dst=$modules_dir/$ver
-  [[ -d $src ]] || { log "no saved modules for $ver"; return 0; }
+  [[ -d $src ]] || {
+    log "no saved modules for $ver"
+    return 0
+  }
   modules_mounted "$ver" && return 0
-  [[ -L $dst ]] && { log "$(unprefix "$dst") is a symlink; modules left alone"; return 1; }
+  [[ -L $dst ]] && {
+    log "$(unprefix "$dst") is a symlink; modules left alone"
+    return 1
+  }
   mkdir -p -- "$run_dir"
   if [[ ! -e $dst ]]; then
     mkdir -p -- "$dst"
     : >"$run_dir/created-mountpoint"
   fi
   # Read-only, so nothing (pacman, depmod) can write into the saved copy.
-  mount --bind -o ro -- "$src" "$dst" || { log "could not mount the saved modules for $ver"; return 1; }
+  mount --bind -o ro -- "$src" "$dst" || {
+    log "could not mount the saved modules for $ver"
+    return 1
+  }
   log "running last-good $ver with its saved modules mounted over $(unprefix "$dst")"
 }
 

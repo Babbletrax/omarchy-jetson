@@ -15,7 +15,7 @@ source=(
   'omarchy-jetson-kernel-modules.service'
   "PROJECT-LICENSE::file://${startdir}/../../LICENSE"
 )
-sha256sums=('e0d08aee19ceda2d9a333e9c9a1a943706b270139afa2f82ab408e4f12baa9a3'
+sha256sums=('b2749a38a273d210d7e297bedc0ddca6e287bd2433ea5d908c0be4aa45c388c0'
             'baa50d6a99baf9a183544d43e25c71a9eaf9df54f21bd57457c488bb34375aff'
             '1f86f1bf7446aecbd73961cdd3191bf7dfc5c7986240b620d7888ba99491e1dc'
             '83cfe731d9126f1c55f3663e7c6e51e37267420bd92cfeafcb8ab96d2a9c12a2')

@@ -38,7 +38,7 @@ source=(
   "PROJECT-LICENSE::file://${startdir}/../../LICENSE"
   "omarchy-jetson-SKILL.md::file://${startdir}/../../config/skills/omarchy-jetson/SKILL.md"
 )
-sha256sums=('707aa0906ae7fa65fd8aa5b32cbe872ec1e25652da69e2d58c7939c76f37d697'
+sha256sums=('91f85d4f013ccab2ebcf97e017993cbe5ed45819a52967a4f23d8acc11ee3a8d'
             '382239e566260e24081400ed908a189cf0711ac7a61b828328aab1e8b162e1ec'
             'b55d3356e8a25110e17d38b66a160f09fb7600c98ce74c87f3a17570f179590e'
             'b9452e7f597ad33727580df7078de9da3c9afbf463444b5416f070221dbca76b'
