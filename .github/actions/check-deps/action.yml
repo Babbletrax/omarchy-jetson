@@ -1,0 +1,41 @@
+name: make check dependencies
+description: >-
+  Install what `make check` needs on an Ubuntu arm64 runner: the test tools
+  from the Ubuntu archive, ShellCheck from its pinned release, and upstream
+  Omarchy's files from its signed package (see ci/install-omarchy.sh).
+inputs:
+  omarchy:
+    description: Omarchy version to unpack, `pinned` (what the Jetson layer builds against) or `latest`
+    required: false
+    default: pinned
+runs:
+  using: composite
+  steps:
+    - name: Install test dependencies
+      shell: bash
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq --no-install-recommends \
+          jq ripgrep python3 python-is-python3 file xz-utils rsync gpg gpg-agent gpgv libarchive-tools zstd
+
+    - name: Install ShellCheck (pinned release)
+      shell: bash
+      env:
+        SHELLCHECK_VERSION: v0.11.0
+        SHELLCHECK_SHA256: 12b331c1d2db6b9eb13cfca64306b1b157a86eb69db83023e261eaa7e7c14588
+      run: |
+        tarball="shellcheck-${SHELLCHECK_VERSION}.linux.aarch64.tar.xz"
+        curl -fsSLo "$RUNNER_TEMP/$tarball" \
+          "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/${tarball}"
+        echo "${SHELLCHECK_SHA256}  $RUNNER_TEMP/$tarball" | sha256sum -c -
+        tar -xJf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP"
+        sudo install -m 0755 "$RUNNER_TEMP/shellcheck-${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck
+        shellcheck --version
+
+    # Several suites drive upstream Omarchy's own scripts, as installed on the
+    # target. The package's signature is checked against the pinned key.
+    - name: Unpack upstream Omarchy (${{ inputs.omarchy }})
+      shell: bash
+      env:
+        OMARCHY_MODE: ${{ inputs.omarchy }}
+      run: sudo ./ci/install-omarchy.sh "$OMARCHY_MODE"

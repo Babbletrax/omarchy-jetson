@@ -1,0 +1,49 @@
+# Reviewed exceptions for tests/no-hardcoded-config.py.
+#
+#   host <domain>   a public host that URLs in this repository may point at;
+#                   its subdomains are included
+#   <glob>:<regex>  a reviewed line: a file matching the glob, a line matching
+#                   the regex (Python syntax)
+#
+# Keep this list short and say why each entry is here. A new host is reviewed
+# like a new dependency: is it the publisher's own, official location?
+
+# --- Package upstreams (PKGBUILD sources, pinned by checksum) -----------------
+host github.com
+host git.sr.ht
+host gitlab.freedesktop.org
+host developer.nvidia.com
+host developer.download.nvidia.com
+host repo.download.nvidia.com
+host update.code.visualstudio.com
+host code.visualstudio.com
+host downloads.1password.com
+host cache.agilebits.com
+host app-updates.agilebits.com
+host voxtype.io
+
+# --- Distribution repositories and signed release artifacts -------------------
+host os.archlinuxarm.org
+host pkgs.omarchy.org
+
+# --- Services the checks query (read-only, public APIs) -----------------------
+host api.github.com
+host security.archlinux.org
+host api.osv.dev
+
+# --- Documentation links ------------------------------------------------------
+host docs.nvidia.com
+host www.nvidia.com
+host www.contributor-covenant.org
+host omarchy.org
+host wiki.archlinux.org
+host wiki.hypr.land
+host www.lazyvim.org
+host devhints.io
+host docs.github.com
+host securityscorecards.dev
+
+# --- Reviewed lines -------------------------------------------------------------
+# NVIDIA's initrd flash talks to the board over the USB link at its fixed IPv6
+# link-local address; the patch only changes the ping command around it.
+patches/l4t-network-flash-arch.patch:fe80::1%

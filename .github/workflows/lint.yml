@@ -1,0 +1,63 @@
+name: lint
+
+# Formatting and linting. ShellCheck runs in `make check` (tests/static.sh).
+# The existing tree predates shfmt and `ruff format`, so those two only check
+# the files a change touches (ci/lint-format.sh); `ruff check` and the link
+# check cover everything.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: shfmt, ruff, Markdown links
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      SHFMT_VERSION: v3.14.1
+      SHFMT_SHA256: 5f2db09dae91fca848f7adbdd014632e921a383863a2ad7e0450ad3aba0c6489
+      RUFF_VERSION: 0.17.2
+      RUFF_SHA256: 468f29d64949574f0d28442c02f0b4fb680cff7ba8fc26b6287a73b945308e1c
+    steps:
+      - name: Check out (full history, to diff against the base)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install shfmt and ruff (pinned releases)
+        run: |
+          curl -fsSLo "$RUNNER_TEMP/shfmt" \
+            "https://github.com/mvdan/sh/releases/download/${SHFMT_VERSION}/shfmt_${SHFMT_VERSION}_linux_arm64"
+          echo "${SHFMT_SHA256}  $RUNNER_TEMP/shfmt" | sha256sum -c -
+          sudo install -m 0755 "$RUNNER_TEMP/shfmt" /usr/local/bin/shfmt
+          tarball=ruff-aarch64-unknown-linux-gnu.tar.gz
+          curl -fsSLo "$RUNNER_TEMP/$tarball" \
+            "https://github.com/astral-sh/ruff/releases/download/${RUFF_VERSION}/${tarball}"
+          echo "${RUFF_SHA256}  $RUNNER_TEMP/$tarball" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP"
+          sudo install -m 0755 "$RUNNER_TEMP/ruff-aarch64-unknown-linux-gnu/ruff" /usr/local/bin/ruff
+          shfmt --version
+          ruff --version
+
+      - name: ruff check
+        run: ruff check --no-cache --output-format=github .
+
+      - name: shfmt and ruff format (changed files)
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: ci/lint-format.sh "$BASE_SHA"
+
+      - name: Markdown relative links (offline)
+        run: python3 -I ci/check-doc-links.py .

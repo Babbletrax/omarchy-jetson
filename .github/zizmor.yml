@@ -1,0 +1,8 @@
+# zizmor configuration (security.yml runs zizmor over the workflows).
+rules:
+  # GitHub's `uses: $/...` self-repository syntax is not understood by
+  # actionlint yet, so the composite action stays workspace-relative
+  # (`./.github/actions/...`). It runs after actions/checkout of the same
+  # commit, with nothing else written to the workspace first.
+  self-repository:
+    disable: true
