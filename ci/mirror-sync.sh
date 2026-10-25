@@ -48,11 +48,11 @@ push() {
 # Every commit in the range is scanned, not just the tip: history is
 # published too, so something added and later removed still counts.
 gate() {
-  local from=$1 to=$2 tree="$work/tree" range c
+  local from=$1 to=$2 tree range c
   if [[ -n $from ]]; then range="$from..$to"; else range=$to; fi
   while read -r c; do
-    rm -rf "$tree"
-    mkdir -p "$tree"
+    # A fresh directory per commit, inside $work (removed on exit).
+    tree=$(mktemp -d "$work/tree.XXXXXX")
     g --work-tree="$tree" checkout -q "$c" -- .
     (cd "$tree" && ./tests/public-hygiene.sh && ./tests/no-hardcoded-config.py) >/dev/null 2>&1 ||
       { say "hygiene failed on commit $c: not publishing"; return 1; }

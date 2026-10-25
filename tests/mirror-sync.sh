@@ -22,8 +22,8 @@ export PATH="$fx/bin:$PATH" HYGIENE_PRIVATE_PATTERNS='' GIT_AUTHOR_NAME=t GIT_AU
 git init -q --bare -b main "$fx/primary.git"
 git init -q --bare -b main "$fx/public.git"
 git init -q -b main "$fx/w"
-# Seed with this repository's tree, so the real hygiene scans run.
-git -C "$repo_root" archive HEAD | tar -x -C "$fx/w"
+# Seed with this repository's working tree, so the real hygiene scans run.
+(cd "$repo_root" && git ls-files -z --cached --others --exclude-standard | tar --null -T - -c) | tar -x -C "$fx/w"
 git -C "$fx/w" add -A && git -C "$fx/w" commit -qm seed
 git -C "$fx/w" push -q "$fx/primary.git" main
 
