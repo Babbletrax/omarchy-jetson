@@ -49,3 +49,4 @@ xdg-user-dirs
 xorg-xwayland
 zram-generator
 omarchy-jetson-updates
+omarchy-jetson-kernel-safety

@@ -2,7 +2,7 @@
 
 pkgname=omarchy-jetson-updates
 pkgver=0.1.0
-pkgrel=1
+pkgrel=2
 pkgdesc='Opt-in automatic system updates for Omarchy Jetson through upstream omarchy-update steps'
 arch=('aarch64')
 url='https://github.com/OWNER/omarchy-jetson'
@@ -29,7 +29,7 @@ source=(
   'omarchy-jetson-updates.tmpfiles'
   "PROJECT-LICENSE::file://${startdir}/../../LICENSE"
 )
-sha256sums=('0713f6fe4214e4ed7a296eae025897c534a7cd7f04739648cffe9f5fa15d14b6'
+sha256sums=('ed87395bdb318434fa62552f2442e17cd8221a4a5ccd7f1273e965b474b87609'
             '0a8e9bea1361271bc48ca20bd0b6e9e30b7b273d55b13187e6d88578a223e7cf'
             '674a92dabfe08ccbd659bea90823e43a0bff54526eb2eb78a621cdd9a954001a'
             'b1d13f1a60f89fccf9c4978a4fc271d1aab539a8c1ffc13061d68ad4ed984a2d'

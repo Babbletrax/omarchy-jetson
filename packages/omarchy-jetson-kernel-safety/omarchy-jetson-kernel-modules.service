@@ -1,0 +1,21 @@
+# Booted from the "last-good" boot menu entry: mount the saved module tree
+# (kernel and NVIDIA out-of-tree modules) read-only over
+# /usr/lib/modules/<version>, so the old kernel finds its own modules even
+# after pacman replaced or removed them. Other boots skip this unit.
+[Unit]
+Description=Omarchy Jetson: mount the last-good kernel's modules
+# Runs as soon as the root filesystem is writable, before udev or
+# systemd-modules-load load anything. /boot is on the root filesystem, so no
+# other mount is needed.
+DefaultDependencies=no
+ConditionKernelCommandLine=omarchy_jetson.last_good=1
+ConditionPathIsDirectory=/boot/last-good/modules
+After=systemd-remount-fs.service
+Before=systemd-udevd.service systemd-udev-trigger.service systemd-modules-load.service sysinit.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/omarchy-jetson-kernel restore-modules
+# Never hold up booting for long.
+TimeoutStartSec=60

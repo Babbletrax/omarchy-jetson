@@ -1,0 +1,24 @@
+# Save the running kernel to /boot/last-good, and keep the "last-good" boot
+# menu entry, before pacman changes anything that boots it. A failure (no free
+# space, an extlinux.conf this tool cannot parse, a bad copy) stops the whole
+# transaction, so a kernel update never runs unprotected.
+#
+# linux-jetson-headers is not a target: headers do not take part in booting,
+# and a headers update always comes with linux-jetson. linux-aarch64 is: it
+# owns the /boot/Image symlink the DEFAULT entry boots, and it should stay held
+# by IgnorePkg.
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Operation = Remove
+Type = Package
+Target = linux-jetson
+Target = linux-jetson-initrd
+Target = nvidia-jetson-*
+Target = linux-aarch64
+
+[Action]
+Description = Saving the running Jetson kernel to /boot/last-good...
+When = PreTransaction
+Exec = /usr/bin/omarchy-jetson-kernel backup
+AbortOnFail

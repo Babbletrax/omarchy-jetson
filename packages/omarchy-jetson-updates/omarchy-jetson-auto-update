@@ -32,6 +32,9 @@ pacman_lock=${OMARCHY_JETSON_PACMAN_LOCK:-/var/lib/pacman/db.lck}
 pacman_conf=${OMARCHY_JETSON_PACMAN_CONF:-/etc/pacman.conf}
 upstream_locks=${OMARCHY_JETSON_UPSTREAM_LOCKS:-/run/user/*/omarchy-update.lock /tmp/omarchy-update.lock}
 min_free_kib=${OMARCHY_JETSON_UPDATE_MIN_FREE_KIB:-$((2 * 1024 * 1024))}
+# Installed by omarchy-jetson-kernel-safety: a manual kernel update first saves
+# the running kernel to /boot/last-good.
+kernel_backup_hook=${OMARCHY_JETSON_KERNEL_BACKUP_HOOK:-/usr/share/libalpm/hooks/10-omarchy-jetson-kernel-backup.hook}
 
 pending=$state/auto-pending
 list=$state/updates.txt
@@ -67,7 +70,8 @@ upgradable() { awk 'NF && $NF != "[ignored]" { print $1 }' "${1:--}"; }
 
 # Hook point for the kernel-safety feature. Prints the kernel/BSP packages
 # among the pending updates and succeeds when there is at least one. Until a
-# guided kernel update exists, any match means the user has to do it.
+# guided kernel update exists, any match means the user has to do it; the
+# kernel-safety backup only protects that manual update.
 kernel_update_pending() { # list file
   local found
   found=$(upgradable "$1" | grep -E "$kernel_package_re" || true)
@@ -83,6 +87,14 @@ kernel_hold_present() {
   for pkg in "${held_packages[@]}"; do
     grep -qxF "$pkg" <<<"$ignored" || return 1
   done
+}
+
+kernel_backup_note() {
+  if [[ -e $kernel_backup_hook ]]; then
+    printf '%s' "The running kernel is saved to /boot/last-good first; if the new one fails to start, choose last-good in the boot menu."
+  else
+    printf '%s' "No kernel backup will be taken: install omarchy-jetson-kernel-safety first."
+  fi
 }
 
 online() {
@@ -210,7 +222,7 @@ do_apply() {
   if kernel=$(kernel_update_pending "$list"); then
     rm -f "$pending"
     log "blocked: kernel/BSP update needs the user: $(tr '\n' ' ' <<<"$kernel")"
-    write_notice kernel "A kernel or Jetson BSP update is waiting and will not install by itself: $(paste -sd' ' <<<"$kernel"). Update by hand when you can check the board afterwards."
+    write_notice kernel "A kernel or Jetson BSP update is waiting and will not install by itself: $(paste -sd' ' <<<"$kernel"). Update by hand with omarchy-update when you can check the board afterwards. $(kernel_backup_note)"
     return 0
   fi
 
