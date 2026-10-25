@@ -5,7 +5,7 @@ pkgver=0.1.0
 pkgrel=2
 pkgdesc='Opt-in automatic system updates for Omarchy Jetson through upstream omarchy-update steps'
 arch=('aarch64')
-url='https://github.com/OWNER/omarchy-jetson'
+url='https://github.com/Babbletrax/omarchy-jetson'
 license=('MIT')
 depends=('omarchy' 'bash' 'coreutils' 'gawk' 'grep' 'networkmanager' 'pacman' 'pacman-contrib'
          'sed' 'systemd' 'util-linux')

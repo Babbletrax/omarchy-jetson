@@ -11,3 +11,9 @@ tests/observability.sh:op://
 # Generated from upstream Omarchy's own menu (scripts/generate-menu-extension.py),
 # which ships its own agent entries.
 packages/omarchy-jetson-upstream/default-menu-extension.jsonc:[Hh]ermes
+
+# The public GitHub owner. The handle is in the private block list (it would
+# otherwise flag personal identifiers), but the project's own public home and
+# its code owner are meant to be published.
+packages/*/PKGBUILD:^url='https://github\.com/Babbletrax/omarchy-jetson'$
+.github/CODEOWNERS:@Babbletrax

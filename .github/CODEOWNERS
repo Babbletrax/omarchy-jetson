@@ -1,12 +1,12 @@
-# Review owners. @OWNER is a placeholder: replace it with the maintainer's
+# Review owners. @Babbletrax is a placeholder: replace it with the maintainer's
 # account or team when the repository is published, before enabling "Require
 # review from Code Owners".
-*                            @OWNER
+*                            @Babbletrax
 
 # Changes to CI, its pinned keys and the hygiene rules get an explicit owner
 # review even when the rule above is narrowed later.
-/.github/                    @OWNER
-/ci/                         @OWNER
-/tests/public-hygiene.*      @OWNER
-/tests/no-hardcoded-config.* @OWNER
-/config/versions.env         @OWNER
+/.github/                    @Babbletrax
+/ci/                         @Babbletrax
+/tests/public-hygiene.*      @Babbletrax
+/tests/no-hardcoded-config.* @Babbletrax
+/config/versions.env         @Babbletrax

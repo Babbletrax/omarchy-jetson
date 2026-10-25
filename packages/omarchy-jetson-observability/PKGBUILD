@@ -5,7 +5,7 @@ pkgver=0.1.0
 pkgrel=5
 pkgdesc='Read-only Jetson thermal, clock and unified-memory status'
 arch=('aarch64')
-url='https://github.com/OWNER/omarchy-jetson'
+url='https://github.com/Babbletrax/omarchy-jetson'
 license=('MIT')
 depends=('bash' 'coreutils' 'gawk' 'jq' 'sed' 'systemd' 'tar' 'util-linux')
 

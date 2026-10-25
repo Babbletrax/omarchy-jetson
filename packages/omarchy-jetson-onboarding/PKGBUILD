@@ -5,7 +5,7 @@ pkgver=0.1.0
 pkgrel=1
 pkgdesc='First-boot account, network and timezone setup on the console before greetd'
 arch=('aarch64')
-url='https://github.com/OWNER/omarchy-jetson'
+url='https://github.com/Babbletrax/omarchy-jetson'
 license=('MIT')
 # omarchy provides the shared setup form and omarchy-provision-user.
 depends=('omarchy' 'omarchy-jetson-session' 'bash' 'coreutils' 'gawk' 'gum' 'networkmanager'
