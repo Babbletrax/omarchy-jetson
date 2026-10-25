@@ -2,7 +2,7 @@
 
 pkgname=omarchy-jetson-session
 pkgver=0.1.0
-pkgrel=6
+pkgrel=7
 pkgdesc='Login, lock and idle integration for the Omarchy Jetson desktop'
 arch=('aarch64')
 url='https://github.com/OWNER/omarchy-jetson'
@@ -19,7 +19,7 @@ source=(
   "PROJECT-LICENSE::file://${startdir}/../../LICENSE"
 )
 sha256sums=('626160842c3f379751f6be64c8bd676006f69fb88e8c887d944ca34edf22e8f5'
-            'da89f0fd872f2b34aa8974edf07321606b710a0ccdd6e3dc634acf7de2fd73ea'
+            '5fac741ac960b2b0cc03f489bcc8218bc321603030b2b54771de4b85934bffff'
             '7f354afdafefc84861ad2e8b5ffef0f71e6541cc5c41ae6059f8be71e8016ed3'
             '650eb941071eeebb1a179170ee541ab5107b059415670e70a0d0a626274386bd'
             '5e3344640983be7eefafaead07bc958f10ea953f38cf5eaf3712b7c93b3502f6'

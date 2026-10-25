@@ -5,7 +5,7 @@ After=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/swayidle -w timeout 300 /usr/bin/omarchy-jetson-idle-lock before-sleep /usr/bin/omarchy-system-lock
+ExecStart=/usr/bin/swayidle -w idlehint 900 timeout 300 /usr/bin/omarchy-jetson-idle-lock before-sleep /usr/bin/omarchy-system-lock
 Restart=on-failure
 RestartSec=2
 
