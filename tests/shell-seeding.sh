@@ -95,5 +95,15 @@ mkdir "$HOME/.claude/skills/omarchy"
 out=$(run_seed)
 [[ $out != *skill-linked* ]]
 [[ -d $HOME/.claude/skills/omarchy && ! -L $HOME/.claude/skills/omarchy ]]
+# A link pointing elsewhere is a local override (e.g. a device-local skill set)
+# and survives; a link into the packaged dir that went stale is refreshed.
+mkdir -p "$fixture_dir/local-skills/omarchy-jetson"
+ln -sfn "$fixture_dir/local-skills/omarchy-jetson" "$HOME/.claude/skills/omarchy-jetson"
+out=$(run_seed)
+[[ $(readlink "$HOME/.claude/skills/omarchy-jetson") == "$fixture_dir/local-skills/omarchy-jetson" ]]
+ln -sfn "$OMARCHY_SEED_ROOT/skills/gone" "$HOME/.claude/skills/omarchy-jetson"
+out=$(run_seed)
+[[ $out == *skill-linked* ]]
+[[ $(readlink "$HOME/.claude/skills/omarchy-jetson") == "$OMARCHY_SEED_ROOT/skills/omarchy-jetson" ]]
 
 printf 'PASS  shell.json, menu extension and agent-skill seeding, upgrade refresh and user-edit preservation fixture\n'

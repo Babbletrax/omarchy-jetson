@@ -45,10 +45,11 @@ seed_file() {
 
 # Link the agent skills (upstream's and the Jetson one beside them) into each
 # installed agent's skill dir, as upstream's provisioning does. Users set up
-# before a skill shipped never got its link. A real directory of the same
-# name is the user's own copy and is left alone.
+# before a skill shipped never got its link. Only missing links, and links that
+# already point into the packaged skills dir, are (re)made: a real directory or
+# a link elsewhere (a local override of the same skill) is the user's choice.
 link_agent_skills() {
-  local skill name dir
+  local skill name dir target
   for skill in "$agent_skills"/*/; do
     [[ -d $skill ]] || continue
     skill=${skill%/}
@@ -56,8 +57,9 @@ link_agent_skills() {
     for dir in "$HOME/.agents/skills" "$HOME/.claude/skills" "$HOME/.codex/skills" \
                "$HOME/.pi/agent/skills"; do
       [[ -d ${dir%/skills} ]] || continue
-      if [[ -e $dir/$name && ! -L $dir/$name ]]; then
-        continue
+      if [[ -e $dir/$name || -L $dir/$name ]]; then
+        target=$(readlink "$dir/$name" 2>/dev/null) || continue
+        [[ $target == "$agent_skills"/* ]] || continue
       fi
       if [[ $(readlink "$dir/$name" 2>/dev/null) != "$skill" ]]; then
         mkdir -p "$dir"
