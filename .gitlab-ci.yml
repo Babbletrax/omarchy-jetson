@@ -122,8 +122,12 @@ packages:
       if [[ $CI_PIPELINE_SOURCE == merge_request_event ]]; then
         git fetch -q origin "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
         export BASE_SHA=$(git merge-base FETCH_HEAD HEAD)
-      elif [[ $CI_COMMIT_BRANCH == "$CI_DEFAULT_BRANCH" || $CI_PIPELINE_SOURCE =~ ^(schedule|web)$ ]]; then
+      elif [[ $CI_PIPELINE_SOURCE =~ ^(schedule|web)$ ]]; then
+        # Full rebuilds only on the nightly schedule or by hand: they are long
+        # and disk-heavy. A push builds just the packages it changed.
         export BUILD_ALL=true
+      else
+        export BASE_SHA=${CI_COMMIT_BEFORE_SHA:-HEAD~1}
       fi
     - ci/build-packages.sh
   artifacts:
